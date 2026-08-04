@@ -52,7 +52,12 @@ class TeamGameDataError(TeamGameLogError):
 class MlbGameDataClient(Protocol):
     """The subset of ``mlbstatsapi.Mlb`` this service depends on."""
 
-    def get_team(self, team_id: int, **params: object) -> Team | None: ...
+    def get_team(
+        self,
+        team_id: int,
+        season: int = ...,
+        **params: object,
+    ) -> Team | None: ...
 
     def get_team_stats(
         self,
@@ -114,7 +119,7 @@ def _collect_batting_lines(
     team_id: int,
     season: int,
 ) -> list[TeamGameBattingLine]:
-    team = _fetch_mlb_team(client, team_id)
+    team = _fetch_mlb_team(client, team_id, season)
     game_log = _fetch_hitting_game_log(client, team_id, season)
     scheduled_games = _index_schedule_games(_fetch_schedule(client, team_id, season))
 
@@ -147,14 +152,17 @@ def _collect_batting_lines(
     )
 
 
-def _fetch_mlb_team(client: MlbGameDataClient, team_id: int) -> Team:
+def _fetch_mlb_team(client: MlbGameDataClient, team_id: int, season: int) -> Team:
+    """Look the team up for the requested season to get its name for that season."""
     try:
-        team = client.get_team(team_id)
+        team = client.get_team(team_id, season=season)
     except TheMlbStatsApiException as exc:
-        raise TeamGameLogError(f"Unable to retrieve MLB team {team_id}") from exc
+        raise TeamGameLogError(
+            f"Unable to retrieve MLB team {team_id} for {season}"
+        ) from exc
 
     if team is None:
-        raise TeamNotFoundError(f"No MLB team found for team id {team_id}")
+        raise TeamNotFoundError(f"No MLB team found for team id {team_id} in {season}")
     if team.sport is None or team.sport.id != MLB_SPORT_ID:
         raise TeamNotFoundError(
             f"Team {team_id} ({team.name}) is not a Major League Baseball team"

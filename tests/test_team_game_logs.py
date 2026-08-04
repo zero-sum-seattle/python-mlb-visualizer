@@ -601,6 +601,29 @@ def test_upstream_team_lookup_errors_are_translated() -> None:
     assert excinfo.value.__cause__ is error
 
 
+def test_team_lookup_requests_the_selected_season() -> None:
+    client = make_client()
+    collect(client)
+    assert client.calls["get_team"] == {"team_id": CUBS_ID, "season": SEASON}
+
+
+def test_historical_team_name_is_used_for_every_line() -> None:
+    """The lookup name wins over the game log's current franchise name."""
+    historical_team = Team(
+        id=CUBS_ID,
+        link="/api/v1/teams/112",
+        name="Chicago Orphans",
+        sport=MLB_SPORT,
+    )
+    client = FakeMlb(
+        team=historical_team,
+        team_stats=build_team_stats(load_payload("cubs_2025_hitting_game_log")),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    lines = collect(client)
+    assert {line.team_name for line in lines} == {"Chicago Orphans"}
+
+
 def test_only_regular_season_data_is_requested() -> None:
     client = make_client()
     collect(client)
