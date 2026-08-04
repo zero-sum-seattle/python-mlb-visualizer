@@ -96,7 +96,7 @@ Three requests per team-season, independent of how many games are played:
 
 | Call | Purpose |
 | --- | --- |
-| `Mlb.get_team(team_id)` | Confirm the id is an MLB team (`team.sport.id == 1`) and get its canonical name |
+| `Mlb.get_team(team_id, season=season)` | Confirm the id is an MLB team (`team.sport.id == 1`) and get its name for that season |
 | `Mlb.get_team_stats(team_id, stats=["gameLog"], groups=["hitting"], season=..., gameType="R")` | Per-game hits and runs, home/away, opponent id, date |
 | `Mlb.get_schedule(start_date=f"{season}-01-01", end_date=f"{season}-12-31", sport_id=1, team_id=..., gameTypes="R")` | Status, opponent name, game number, doubleheader flag, scheduled innings |
 
@@ -115,21 +115,48 @@ Package return models the service depends on:
 Every field used is a declared model attribute. No raw response dictionaries are
 read.
 
-### Why the join is safe
+### The join is enforced, not assumed
 
-Checked across the full 2025 regular seasons of teams 136, 111, 138, 110, 115,
-and 147 (972 games):
+The two sources were first measured against each other across the full 2025
+regular seasons of teams 136, 111, 138, 110, 115, and 147 (972 games), and they
+agreed on every game. Rather than rely on that observation, the service now
+checks the overlap for every game it normalizes and raises `TeamGameDataError`
+when any of these disagree:
 
-- every `split.game.game_pk` appears in that team's schedule
-- `split.date` equals `ScheduleGames.official_date` for every game
-- `split.is_home` always agrees with which side of `ScheduleGames.teams` holds
-  the team id
-- `split.opponent.id` always equals the other side's `team.id`
-- `split.stat.runs` always equals that side's schedule `score`
+| Invariant | Sources compared |
+| --- | --- |
+| Selected team | `split.team.id` vs the requested team id |
+| Official date | `split.date` vs `ScheduleGames.official_date`, both parsed as dates |
+| Opponent | `split.opponent.id` vs the other side of `ScheduleGames.teams` |
+| Home or away | `split.is_home` vs which side of `ScheduleGames.teams` holds the team id |
+| Runs | `split.stat.runs` vs the selected side's schedule `score` |
 
-Home/away and opponent are therefore taken from the schedule's structured
-`teams.home` / `teams.away` blocks, which also supply the opponent's display
-name. No string parsing is involved anywhere.
+Every message names the `gamePk`, the invariant, and both conflicting values.
+The score check is skipped when `ScheduleGameTeam.score` is `None`, because that
+field is optional upstream; it is not treated as a mismatch.
+
+Team **names** are deliberately excluded from the comparison. The game log
+reports the franchise's current name while the team lookup reports its name for
+the requested season, so the two legitimately differ for a renamed or relocated
+club.
+
+Home/away and opponent are taken from the schedule's structured `teams.home` /
+`teams.away` blocks, which also supply the opponent's display name. No string
+parsing is involved anywhere.
+
+These checks exist to catch a future upstream field change or package-model
+change as a loud failure rather than a silently wrong record. They hold on real
+data for every season spot-checked from 1908 to 2025, including the 60-game 2020
+season and the 2021 seven-inning doubleheaders.
+
+### Duplicate splits
+
+The hitting game log is expected to return one split per game. A repeated
+`gamePk` is accepted only when the two splits normalize to an identical
+`TeamGameBattingLine`; the duplicate is then ignored. If the normalized records
+differ, the service raises `TeamGameDataError` naming the `gamePk` and each
+field that conflicts, for example `hits 6 vs 9`. Neither the first nor the last
+value is silently preferred.
 
 ## 3. Status filtering rules
 
@@ -214,7 +241,9 @@ game log.
 Nothing in the service assumes nine innings. `scheduled_innings` is carried
 through from the schedule. All 2464 rows of the 2025 regular season were
 scheduled for 9 innings, but MLB used 7-inning doubleheader games in 2020 and
-2021, and extra-inning games simply report more innings played than scheduled.
+2021: the 2021 Mariners return 157 nine-inning games and 5 seven-inning games,
+including both halves of the 2021-04-13 and 2021-04-15 doubleheaders.
+Extra-inning games simply report more innings played than scheduled.
 
 ## 8. Known limitations
 
@@ -233,8 +262,14 @@ scheduled for 9 innings, but MLB used 7-inning doubleheader games in 2020 and
   season, so a game where the designated home team bats first has not been
   exercised. Home and away follow MLB's designated `teams.home` / `teams.away`
   blocks, not batting order.
-- Team ids are the stable identity; names are display values that change
-  (team 133 is `"Athletics"` in 2025). A stored name is a snapshot.
+- Team ids are the stable identity; names are display values that change. The
+  selected team's name is requested for the season under inspection, so team 133
+  is `"Oakland Athletics"` for 2024 and `"Athletics"` for 2025, and team 120 is
+  `"Montreal Expos"` for 2004. Opponent names come from that season's schedule
+  entry and are historical for the same reason.
+- Requesting a season before a team existed 404s on `teams/{id}?season=...`, so
+  `get_team` returns `None` and the service raises `TeamNotFoundError` naming the
+  season rather than reporting an empty game log.
 - Minor league team ids are rejected via `team.sport.id != 1`, which costs the
   extra `get_team` request.
 - Only team-level hitting is covered. Pitching, fielding, and player-level
@@ -248,6 +283,10 @@ scheduled for 9 innings, but MLB used 7-inning doubleheader games in 2020 and
 - Use `(team_id, game_pk)` as the natural unique key. `game_pk` is stable across
   postponement and resumption, so upserting on that pair is idempotent and
   re-running an ingest cannot create duplicates.
+- Treat a `TeamGameDataError` from an ingest run as a data-integrity alarm rather
+  than a game to skip. The cross-source invariants and the conflicting-duplicate
+  check exist so that an upstream or package-model change fails the ingest
+  instead of writing a wrong row.
 - Persist `status`, `game_number`, `doubleheader`, and `scheduled_innings`
   alongside hits and runs. `status` is what makes the completeness rule
   auditable after the fact, and `game_number` is required to order a

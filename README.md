@@ -131,7 +131,7 @@ request:
 
 | Call | Purpose |
 | --- | --- |
-| `Mlb.get_team` | Confirm the id is an MLB team and read its canonical name |
+| `Mlb.get_team(team_id, season=season)` | Confirm the id is an MLB team and read its name for that season |
 | `Mlb.get_team_stats(stats=["gameLog"], groups=["hitting"], gameType="R")` | Per-game hits, runs, home/away, opponent id, date |
 | `Mlb.get_schedule(gameTypes="R")` | Status, opponent name, game number, doubleheader flag, scheduled innings |
 
@@ -147,6 +147,31 @@ discards it.
 
 `docs/team-game-data-spike.md` records the full investigation, including the
 measured request counts and field-by-field findings.
+
+### Cross-source validation
+
+The batting numbers come from the game log and the game context comes from the
+schedule, so the service validates the values the two sources share for every
+game instead of assuming they agree. A disagreement raises `TeamGameDataError`
+naming the `gamePk`, the invariant, and both conflicting values:
+
+- `split.team.id` matches the requested team id
+- `split.date` matches `ScheduleGames.official_date`, compared as parsed dates
+- `split.opponent.id` matches the opponent side of the schedule entry
+- `split.is_home` matches the side of the schedule entry holding the team id
+- `split.stat.runs` matches the selected side's schedule `score`, when that
+  optional score is present
+
+Team names are excluded from the comparison on purpose: the game log reports the
+franchise's current name while the team lookup reports its name for the requested
+season, so they legitimately differ for a renamed club.
+
+A repeated `gamePk` in the game log is accepted only when both splits normalize
+to identical records; conflicting duplicates raise `TeamGameDataError` rather
+than silently preferring the first or last value.
+
+These checks turn a future upstream field change or package-model change into a
+loud failure instead of a silently wrong record.
 
 ### Edge cases and limitations
 
@@ -164,8 +189,11 @@ measured request counts and field-by-field findings.
 - A suspended game that is resumed is reported once, dated its original official
   date. A suspended game that is never resumed is excluded; the 2025 season
   contained none, so that path is covered by fixture data only.
-- Nothing assumes nine innings; `scheduled_innings` is carried through.
-- Team ids are the identity. Team names are display values only.
+- Nothing assumes nine innings; `scheduled_innings` is carried through. The 2021
+  Mariners return 5 seven-inning games alongside 157 nine-inning games.
+- Team ids are the identity. Names are display values requested for the season
+  under inspection, so team 133 reads `Oakland Athletics` for 2024 and
+  `Athletics` for 2025.
 
 ## Testing
 
