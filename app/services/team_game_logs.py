@@ -5,6 +5,11 @@ one split per played game in a single request. Game context that the stat split
 does not carry (status, opponent name, game number, scheduled innings) comes
 from a single team schedule request and is joined on ``gamePk``.
 
+The two sources overlap on team, opponent, home/away, date, and runs. That
+overlap is validated for every game rather than assumed, so an upstream or
+package-model change surfaces as a ``TeamGameDataError`` instead of a silently
+wrong record.
+
 See ``docs/team-game-data-spike.md`` for the investigation behind this choice.
 """
 
@@ -116,8 +121,6 @@ def _collect_batting_lines(
     lines: dict[int, TeamGameBattingLine] = {}
     for split in game_log:
         game_pk = split.game.game_pk
-        if game_pk in lines:
-            continue
         scheduled = scheduled_games.get(game_pk)
         if scheduled is None:
             raise TeamGameDataError(
@@ -127,12 +130,15 @@ def _collect_batting_lines(
         status = scheduled.status
         if status is None or status.coded_game_state not in COMPLETED_CODED_GAME_STATES:
             continue
-        lines[game_pk] = _normalize_batting_line(
-            split=split,
-            scheduled=scheduled,
-            status=status.detailed_state,
-            team=team,
-            season=season,
+        _store_or_validate_duplicate(
+            lines,
+            _normalize_batting_line(
+                split=split,
+                scheduled=scheduled,
+                status=status.detailed_state,
+                team=team,
+                season=season,
+            ),
         )
 
     return sorted(
@@ -237,6 +243,34 @@ def _is_completed(game: ScheduleGames) -> bool:
     )
 
 
+def _store_or_validate_duplicate(
+    lines: dict[int, TeamGameBattingLine],
+    line: TeamGameBattingLine,
+) -> None:
+    """Store a normalized line, rejecting a duplicate that disagrees with it.
+
+    The hitting game log is expected to hold one split per game. An identical
+    repeat is harmless, but two splits for the same game with different values
+    mean the upstream data cannot be trusted for that game.
+    """
+    known = lines.get(line.game_pk)
+    if known is None:
+        lines[line.game_pk] = line
+        return
+    if known == line:
+        return
+
+    conflicts = ", ".join(
+        f"{field} {getattr(known, field)!r} vs {getattr(line, field)!r}"
+        for field in type(line).model_fields
+        if getattr(known, field) != getattr(line, field)
+    )
+    raise TeamGameDataError(
+        f"Conflicting duplicate game log records returned for game "
+        f"{line.game_pk} on {line.game_date.isoformat()}: {conflicts}"
+    )
+
+
 def _normalize_batting_line(
     *,
     split: HittingGameLog,
@@ -251,19 +285,24 @@ def _normalize_batting_line(
     if split.stat is None:
         raise TeamGameDataError(f"No hitting stat line returned for {context}")
 
-    home_away, opponent = _resolve_opponent(scheduled, team.id, context)
-
-    try:
-        game_date = date.fromisoformat(split.date)
-    except ValueError as exc:
-        raise TeamGameDataError(
-            f"Unparsable game date {split.date!r} for {context}"
-        ) from exc
+    home_away, selected, opponent = _resolve_sides(scheduled, team.id, context)
+    official_date = _parse_game_date(
+        scheduled.official_date, "official schedule date", context
+    )
+    _validate_split_schedule_consistency(
+        split=split,
+        team_id=team.id,
+        home_away=home_away,
+        selected=selected,
+        opponent=opponent,
+        official_date=official_date,
+        context=context,
+    )
 
     try:
         return TeamGameBattingLine(
             game_pk=game_pk,
-            game_date=game_date,
+            game_date=official_date,
             season=season,
             team_id=team.id,
             team_name=team.name,
@@ -281,19 +320,75 @@ def _normalize_batting_line(
         raise TeamGameDataError(f"Could not normalize {context}: {exc}") from exc
 
 
-def _resolve_opponent(
+def _resolve_sides(
     scheduled: ScheduleGames,
     team_id: int,
     context: str,
-) -> tuple[HomeAway, ScheduleGameTeam]:
-    """Derive home or away and the opponent from the schedule's structured teams."""
+) -> tuple[HomeAway, ScheduleGameTeam, ScheduleGameTeam]:
+    """Derive home or away, the selected team, and the opponent from the schedule."""
     teams = scheduled.teams
     if teams is None:
         raise TeamGameDataError(f"No schedule team information for {context}")
     if teams.home.team.id == team_id:
-        return "home", teams.away
+        return "home", teams.home, teams.away
     if teams.away.team.id == team_id:
-        return "away", teams.home
+        return "away", teams.away, teams.home
     raise TeamGameDataError(
         f"Team {team_id} does not appear in the schedule entry for {context}"
     )
+
+
+def _validate_split_schedule_consistency(
+    *,
+    split: HittingGameLog,
+    team_id: int,
+    home_away: HomeAway,
+    selected: ScheduleGameTeam,
+    opponent: ScheduleGameTeam,
+    official_date: date,
+    context: str,
+) -> None:
+    """Enforce the values the game log split and the schedule entry share.
+
+    Team names are excluded on purpose: the game log reports the franchise's
+    current name while the team lookup reports its name for the season.
+    """
+    if split.team is None or split.team.id != team_id:
+        reported = None if split.team is None else split.team.id
+        raise TeamGameDataError(
+            f"Game log split reports team {reported} but team {team_id} "
+            f"was requested for {context}"
+        )
+
+    split_date = _parse_game_date(split.date, "game log date", context)
+    if split_date != official_date:
+        raise TeamGameDataError(
+            f"Game log date {split_date.isoformat()} does not match official "
+            f"schedule date {official_date.isoformat()} for {context}"
+        )
+
+    if split.opponent.id != opponent.team.id:
+        raise TeamGameDataError(
+            f"Game log opponent {split.opponent.id} does not match scheduled "
+            f"opponent {opponent.team.id} for {context}"
+        )
+
+    if split.is_home != (home_away == "home"):
+        raise TeamGameDataError(
+            f"Game log reports is_home={split.is_home} but the schedule places "
+            f"team {team_id} {home_away} for {context}"
+        )
+
+    runs = split.stat.runs if split.stat is not None else None
+    if runs is not None and selected.score is not None and runs != selected.score:
+        raise TeamGameDataError(
+            f"Game log runs {runs} do not match the scheduled score "
+            f"{selected.score} for {context}"
+        )
+
+
+def _parse_game_date(raw: str, label: str, context: str) -> date:
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise TeamGameDataError(f"Unparsable {label} {raw!r} for {context}") from exc

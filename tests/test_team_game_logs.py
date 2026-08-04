@@ -132,6 +132,14 @@ def make_client(
     )
 
 
+def remove_schedule_score(payload: dict[str, Any], game_pk: int, side: str) -> None:
+    """Drop one side's score from a schedule entry; the upstream field is optional."""
+    for schedule_date in payload["dates"]:
+        for game in schedule_date["games"]:
+            if game["gamePk"] == game_pk:
+                game["teams"][side].pop("score", None)
+
+
 def collect(client: FakeMlb) -> list[TeamGameBattingLine]:
     return get_team_game_batting_lines(CUBS_ID, SEASON, client=client)
 
@@ -251,7 +259,7 @@ def test_records_are_sorted_deterministically() -> None:
     ]
 
 
-def test_duplicate_source_splits_do_not_duplicate_records() -> None:
+def test_identical_duplicate_splits_do_not_duplicate_records() -> None:
     payload = load_payload("cubs_2025_hitting_game_log")
     splits = payload["stats"][0]["splits"]
     splits.append(copy.deepcopy(splits[0]))
@@ -262,6 +270,156 @@ def test_duplicate_source_splits_do_not_duplicate_records() -> None:
     lines = collect(client)
     assert len(lines) == 6
     assert len({line.game_pk for line in lines}) == 6
+    assert by_game_pk(lines)[776704].hits == 6
+
+
+def test_conflicting_duplicate_hits_raise_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    splits = payload["stats"][0]["splits"]
+    conflicting = copy.deepcopy(splits[0])
+    conflicting["stat"]["hits"] = 9
+    splits.append(conflicting)
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "Conflicting duplicate game log records" in message
+    assert "776704" in message
+    assert "hits 6 vs 9" in message
+
+
+def test_conflicting_duplicate_runs_raise_data_error() -> None:
+    """The schedule score is dropped so the score invariant does not fire first."""
+    payload = load_payload("cubs_2025_hitting_game_log")
+    splits = payload["stats"][0]["splits"]
+    conflicting = copy.deepcopy(splits[0])
+    conflicting["stat"]["runs"] = 9
+    splits.append(conflicting)
+    schedule = load_payload("cubs_2025_schedule")
+    remove_schedule_score(schedule, 776704, "home")
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(schedule),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "Conflicting duplicate game log records" in message
+    assert "776704" in message
+    assert "runs 4 vs 9" in message
+
+
+def test_split_for_another_team_raises_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    payload["stats"][0]["splits"][0]["team"]["id"] = 999
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "reports team 999" in message
+    assert "776704" in message
+
+
+def test_split_without_a_team_raises_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    del payload["stats"][0]["splits"][0]["team"]
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError, match="776704"):
+        collect(client)
+
+
+def test_opponent_mismatch_raises_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    payload["stats"][0]["splits"][0]["opponent"]["id"] = 999
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "opponent 999 does not match scheduled opponent 134" in message
+    assert "776704" in message
+
+
+def test_home_away_mismatch_raises_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    payload["stats"][0]["splits"][0]["isHome"] = False
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "is_home=False" in message
+    assert "home" in message
+    assert "776704" in message
+
+
+def test_split_date_disagreeing_with_official_date_raises_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    payload["stats"][0]["splits"][0]["date"] = "2025-08-16"
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "2025-08-16 does not match official schedule date 2025-08-17" in message
+    assert "776704" in message
+
+
+def test_unparsable_official_schedule_date_raises_data_error() -> None:
+    payload = load_payload("cubs_2025_schedule")
+    for schedule_date in payload["dates"]:
+        for game in schedule_date["games"]:
+            if game["gamePk"] == 776704:
+                game["officialDate"] = "08/17/2025"
+    client = FakeMlb(
+        team_stats=build_team_stats(load_payload("cubs_2025_hitting_game_log")),
+        schedule=build_schedule(payload),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "official schedule date '08/17/2025'" in message
+    assert "776704" in message
+
+
+def test_runs_disagreeing_with_schedule_score_raise_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    payload["stats"][0]["splits"][0]["stat"]["runs"] = 9
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    message = str(excinfo.value)
+    assert "runs 9 do not match the scheduled score 4" in message
+    assert "776704" in message
+
+
+def test_missing_schedule_score_does_not_fail_normalization() -> None:
+    schedule = load_payload("cubs_2025_schedule")
+    remove_schedule_score(schedule, 776704, "home")
+    client = FakeMlb(
+        team_stats=build_team_stats(load_payload("cubs_2025_hitting_game_log")),
+        schedule=build_schedule(schedule),
+    )
+    line = by_game_pk(collect(client))[776704]
+    assert (line.hits, line.runs) == (6, 4)
 
 
 def test_missing_stat_line_raises_normalization_error() -> None:
