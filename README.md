@@ -50,8 +50,8 @@ curl -sSL https://install.python-poetry.org | python3 -
 Clone the repository and install dependencies:
 
 ```bash
-git clone <repository-url>
-cd mlb-stats-visualizer
+git clone https://github.com/zero-sum-seattle/python-mlb-visualizer.git
+cd python-mlb-visualizer
 poetry install
 ```
 
@@ -110,6 +110,7 @@ poetry run ruff format --check .
 │       └── test.yml
 ├── .env.example
 ├── .gitignore
+├── poetry.lock
 ├── pyproject.toml
 └── README.md
 ```
