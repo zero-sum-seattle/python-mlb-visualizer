@@ -1,0 +1,615 @@
+{
+  "totalItems": 7,
+  "totalEvents": 0,
+  "totalGames": 7,
+  "totalGamesInProgress": 0,
+  "dates": [
+    {
+      "date": "2025-08-17",
+      "totalItems": 1,
+      "totalEvents": 0,
+      "totalGames": 1,
+      "totalGamesInProgress": 0,
+      "games": [
+        {
+          "gamePk": 776704,
+          "gameGuid": "503ee6f2-932e-4c3a-8f6a-a45c3aa1527b",
+          "link": "/api/v1.1/game/776704/feed/live",
+          "gameType": "R",
+          "season": "2025",
+          "gameDate": "2025-08-17T18:20:00Z",
+          "officialDate": "2025-08-17",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "F",
+            "detailedState": "Final",
+            "statusCode": "F",
+            "startTimeTBD": false,
+            "abstractGameCode": "F"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 134,
+                "name": "Pittsburgh Pirates",
+                "link": "/api/v1/teams/134"
+              },
+              "leagueRecord": {
+                "wins": 52,
+                "losses": 73,
+                "ties": 0,
+                "pct": ".416"
+              },
+              "score": 3,
+              "isWinner": false,
+              "splitSquad": false,
+              "seriesNumber": 40
+            },
+            "home": {
+              "team": {
+                "id": 112,
+                "name": "Chicago Cubs",
+                "link": "/api/v1/teams/112"
+              },
+              "leagueRecord": {
+                "wins": 70,
+                "losses": 53,
+                "ties": 0,
+                "pct": ".569"
+              },
+              "score": 4,
+              "isWinner": true,
+              "splitSquad": false,
+              "seriesNumber": 41
+            }
+          },
+          "venue": {
+            "id": 17,
+            "name": "Wrigley Field",
+            "link": "/api/v1/venues/17"
+          },
+          "content": {
+            "link": "/api/v1/game/776704/content"
+          },
+          "isTie": false,
+          "gameNumber": 1,
+          "publicFacing": true,
+          "doubleHeader": "N",
+          "gamedayType": "P",
+          "tiebreaker": "N",
+          "calendarEventID": "14-776704-2025-08-17",
+          "seasonDisplay": "2025",
+          "dayNight": "day",
+          "scheduledInnings": 9,
+          "reverseHomeAwayStatus": false,
+          "inningBreakLength": 120,
+          "gamesInSeries": 3,
+          "seriesGameNumber": 3,
+          "seriesDescription": "Regular Season",
+          "recordSource": "S",
+          "ifNecessary": "N",
+          "ifNecessaryDescription": "Normal Game"
+        }
+      ],
+      "events": []
+    },
+    {
+      "date": "2025-08-18",
+      "totalItems": 2,
+      "totalEvents": 0,
+      "totalGames": 2,
+      "totalGamesInProgress": 0,
+      "games": [
+        {
+          "gamePk": 777459,
+          "gameGuid": "58731fb7-3095-4020-bbd5-c220f0557d54",
+          "link": "/api/v1.1/game/777459/feed/live",
+          "gameType": "R",
+          "season": "2025",
+          "gameDate": "2025-08-18T18:20:00Z",
+          "officialDate": "2025-08-18",
+          "rescheduledFrom": "2025-06-19T00:05:00Z",
+          "rescheduledFromDate": "2025-06-18",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "F",
+            "detailedState": "Final",
+            "statusCode": "F",
+            "startTimeTBD": false,
+            "abstractGameCode": "F"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 158,
+                "name": "Milwaukee Brewers",
+                "link": "/api/v1/teams/158"
+              },
+              "leagueRecord": {
+                "wins": 79,
+                "losses": 45,
+                "ties": 0,
+                "pct": ".637"
+              },
+              "score": 7,
+              "isWinner": true,
+              "splitSquad": false,
+              "seriesNumber": 41
+            },
+            "home": {
+              "team": {
+                "id": 112,
+                "name": "Chicago Cubs",
+                "link": "/api/v1/teams/112"
+              },
+              "leagueRecord": {
+                "wins": 70,
+                "losses": 54,
+                "ties": 0,
+                "pct": ".565"
+              },
+              "score": 0,
+              "isWinner": false,
+              "splitSquad": false,
+              "seriesNumber": 42
+            }
+          },
+          "venue": {
+            "id": 17,
+            "name": "Wrigley Field",
+            "link": "/api/v1/venues/17"
+          },
+          "content": {
+            "link": "/api/v1/game/777459/content"
+          },
+          "isTie": false,
+          "gameNumber": 1,
+          "publicFacing": true,
+          "doubleHeader": "S",
+          "gamedayType": "P",
+          "tiebreaker": "N",
+          "calendarEventID": "14-777459-2025-08-18",
+          "seasonDisplay": "2025",
+          "dayNight": "day",
+          "description": "Makeup of 6/18ppd",
+          "scheduledInnings": 9,
+          "reverseHomeAwayStatus": false,
+          "inningBreakLength": 120,
+          "gamesInSeries": 5,
+          "seriesGameNumber": 1,
+          "seriesDescription": "Regular Season",
+          "recordSource": "S",
+          "ifNecessary": "N",
+          "ifNecessaryDescription": "Normal Game"
+        },
+        {
+          "gamePk": 776691,
+          "gameGuid": "d370388f-adcf-4cea-aca3-5343185c8f97",
+          "link": "/api/v1.1/game/776691/feed/live",
+          "gameType": "R",
+          "season": "2025",
+          "gameDate": "2025-08-19T00:05:00Z",
+          "officialDate": "2025-08-19",
+          "rescheduleDate": "2025-08-19T18:20:00Z",
+          "rescheduleGameDate": "2025-08-19",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "D",
+            "detailedState": "Postponed",
+            "statusCode": "DR",
+            "startTimeTBD": false,
+            "reason": "Rain",
+            "abstractGameCode": "F"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 158,
+                "name": "Milwaukee Brewers",
+                "link": "/api/v1/teams/158"
+              },
+              "leagueRecord": {
+                "wins": 79,
+                "losses": 47,
+                "ties": 0,
+                "pct": ".627"
+              },
+              "splitSquad": false,
+              "seriesNumber": 41
+            },
+            "home": {
+              "team": {
+                "id": 112,
+                "name": "Chicago Cubs",
+                "link": "/api/v1/teams/112"
+              },
+              "leagueRecord": {
+                "wins": 72,
+                "losses": 54,
+                "ties": 0,
+                "pct": ".571"
+              },
+              "splitSquad": false,
+              "seriesNumber": 42
+            }
+          },
+          "venue": {
+            "id": 17,
+            "name": "Wrigley Field",
+            "link": "/api/v1/venues/17"
+          },
+          "content": {
+            "link": "/api/v1/game/776691/content"
+          },
+          "gameNumber": 2,
+          "publicFacing": true,
+          "doubleHeader": "S",
+          "gamedayType": "P",
+          "tiebreaker": "N",
+          "calendarEventID": "14-776691-2025-08-18",
+          "seasonDisplay": "2025",
+          "dayNight": "night",
+          "scheduledInnings": 9,
+          "reverseHomeAwayStatus": false,
+          "inningBreakLength": 120,
+          "gamesInSeries": 5,
+          "seriesGameNumber": 2,
+          "seriesDescription": "Regular Season",
+          "recordSource": "S",
+          "ifNecessary": "N",
+          "ifNecessaryDescription": "Normal Game"
+        }
+      ],
+      "events": []
+    },
+    {
+      "date": "2025-08-19",
+      "totalItems": 2,
+      "totalEvents": 0,
+      "totalGames": 2,
+      "totalGamesInProgress": 0,
+      "games": [
+        {
+          "gamePk": 776691,
+          "gameGuid": "d370388f-adcf-4cea-aca3-5343185c8f97",
+          "link": "/api/v1.1/game/776691/feed/live",
+          "gameType": "R",
+          "season": "2025",
+          "gameDate": "2025-08-19T18:20:00Z",
+          "officialDate": "2025-08-19",
+          "rescheduledFrom": "2025-08-19T00:05:00Z",
+          "rescheduledFromDate": "2025-08-18",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "F",
+            "detailedState": "Final",
+            "statusCode": "F",
+            "startTimeTBD": false,
+            "abstractGameCode": "F"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 158,
+                "name": "Milwaukee Brewers",
+                "link": "/api/v1/teams/158"
+              },
+              "leagueRecord": {
+                "wins": 79,
+                "losses": 46,
+                "ties": 0,
+                "pct": ".632"
+              },
+              "score": 4,
+              "isWinner": false,
+              "splitSquad": false,
+              "seriesNumber": 41
+            },
+            "home": {
+              "team": {
+                "id": 112,
+                "name": "Chicago Cubs",
+                "link": "/api/v1/teams/112"
+              },
+              "leagueRecord": {
+                "wins": 71,
+                "losses": 54,
+                "ties": 0,
+                "pct": ".568"
+              },
+              "score": 6,
+              "isWinner": true,
+              "splitSquad": false,
+              "seriesNumber": 42
+            }
+          },
+          "venue": {
+            "id": 17,
+            "name": "Wrigley Field",
+            "link": "/api/v1/venues/17"
+          },
+          "content": {
+            "link": "/api/v1/game/776691/content"
+          },
+          "isTie": false,
+          "gameNumber": 1,
+          "publicFacing": true,
+          "doubleHeader": "S",
+          "gamedayType": "P",
+          "tiebreaker": "N",
+          "calendarEventID": "14-776691-2025-08-19",
+          "seasonDisplay": "2025",
+          "dayNight": "day",
+          "description": "Makeup of 8/18 PPD",
+          "scheduledInnings": 9,
+          "reverseHomeAwayStatus": false,
+          "inningBreakLength": 120,
+          "gamesInSeries": 5,
+          "seriesGameNumber": 2,
+          "seriesDescription": "Regular Season",
+          "recordSource": "S",
+          "ifNecessary": "N",
+          "ifNecessaryDescription": "Normal Game"
+        },
+        {
+          "gamePk": 776676,
+          "gameGuid": "d7fb67f3-3e31-4cac-a92c-c2bb87e58f0c",
+          "link": "/api/v1.1/game/776676/feed/live",
+          "gameType": "R",
+          "season": "2025",
+          "gameDate": "2025-08-20T00:05:00Z",
+          "officialDate": "2025-08-19",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "F",
+            "detailedState": "Final",
+            "statusCode": "F",
+            "startTimeTBD": false,
+            "abstractGameCode": "F"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 158,
+                "name": "Milwaukee Brewers",
+                "link": "/api/v1/teams/158"
+              },
+              "leagueRecord": {
+                "wins": 79,
+                "losses": 47,
+                "ties": 0,
+                "pct": ".627"
+              },
+              "score": 1,
+              "isWinner": false,
+              "splitSquad": false,
+              "seriesNumber": 41
+            },
+            "home": {
+              "team": {
+                "id": 112,
+                "name": "Chicago Cubs",
+                "link": "/api/v1/teams/112"
+              },
+              "leagueRecord": {
+                "wins": 72,
+                "losses": 54,
+                "ties": 0,
+                "pct": ".571"
+              },
+              "score": 4,
+              "isWinner": true,
+              "splitSquad": false,
+              "seriesNumber": 42
+            }
+          },
+          "venue": {
+            "id": 17,
+            "name": "Wrigley Field",
+            "link": "/api/v1/venues/17"
+          },
+          "content": {
+            "link": "/api/v1/game/776676/content"
+          },
+          "isTie": false,
+          "gameNumber": 2,
+          "publicFacing": true,
+          "doubleHeader": "S",
+          "gamedayType": "P",
+          "tiebreaker": "N",
+          "calendarEventID": "14-776676-2025-08-19",
+          "seasonDisplay": "2025",
+          "dayNight": "night",
+          "scheduledInnings": 9,
+          "reverseHomeAwayStatus": false,
+          "inningBreakLength": 120,
+          "gamesInSeries": 5,
+          "seriesGameNumber": 3,
+          "seriesDescription": "Regular Season",
+          "recordSource": "S",
+          "ifNecessary": "N",
+          "ifNecessaryDescription": "Normal Game"
+        }
+      ],
+      "events": []
+    },
+    {
+      "date": "2025-08-22",
+      "totalItems": 1,
+      "totalEvents": 0,
+      "totalGames": 1,
+      "totalGamesInProgress": 0,
+      "games": [
+        {
+          "gamePk": 776640,
+          "gameGuid": "280cf979-aaad-4d51-8ad4-e1dbc85813b4",
+          "link": "/api/v1.1/game/776640/feed/live",
+          "gameType": "R",
+          "season": "2025",
+          "gameDate": "2025-08-23T01:38:00Z",
+          "officialDate": "2025-08-22",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "F",
+            "detailedState": "Final",
+            "statusCode": "F",
+            "startTimeTBD": false,
+            "abstractGameCode": "F"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 112,
+                "name": "Chicago Cubs",
+                "link": "/api/v1/teams/112"
+              },
+              "leagueRecord": {
+                "wins": 74,
+                "losses": 55,
+                "ties": 0,
+                "pct": ".574"
+              },
+              "score": 3,
+              "isWinner": true,
+              "splitSquad": false,
+              "seriesNumber": 43
+            },
+            "home": {
+              "team": {
+                "id": 108,
+                "name": "Los Angeles Angels",
+                "link": "/api/v1/teams/108"
+              },
+              "leagueRecord": {
+                "wins": 61,
+                "losses": 67,
+                "ties": 0,
+                "pct": ".477"
+              },
+              "score": 2,
+              "isWinner": false,
+              "splitSquad": false,
+              "seriesNumber": 42
+            }
+          },
+          "venue": {
+            "id": 1,
+            "name": "Angel Stadium",
+            "link": "/api/v1/venues/1"
+          },
+          "content": {
+            "link": "/api/v1/game/776640/content"
+          },
+          "isTie": false,
+          "gameNumber": 1,
+          "publicFacing": true,
+          "doubleHeader": "N",
+          "gamedayType": "P",
+          "tiebreaker": "N",
+          "calendarEventID": "14-776640-2025-08-22",
+          "seasonDisplay": "2025",
+          "dayNight": "night",
+          "scheduledInnings": 9,
+          "reverseHomeAwayStatus": false,
+          "inningBreakLength": 120,
+          "gamesInSeries": 3,
+          "seriesGameNumber": 1,
+          "seriesDescription": "Regular Season",
+          "recordSource": "S",
+          "ifNecessary": "N",
+          "ifNecessaryDescription": "Normal Game"
+        }
+      ],
+      "events": []
+    },
+    {
+      "date": "2025-08-23",
+      "totalItems": 1,
+      "totalEvents": 0,
+      "totalGames": 1,
+      "totalGamesInProgress": 0,
+      "games": [
+        {
+          "gamePk": 776618,
+          "gameGuid": "d54011c6-6e98-42bc-8444-6d405b6c04e0",
+          "link": "/api/v1.1/game/776618/feed/live",
+          "gameType": "R",
+          "season": "2025",
+          "gameDate": "2025-08-24T01:38:00Z",
+          "officialDate": "2025-08-23",
+          "status": {
+            "abstractGameState": "Final",
+            "codedGameState": "F",
+            "detailedState": "Final",
+            "statusCode": "F",
+            "startTimeTBD": false,
+            "abstractGameCode": "F"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 112,
+                "name": "Chicago Cubs",
+                "link": "/api/v1/teams/112"
+              },
+              "leagueRecord": {
+                "wins": 75,
+                "losses": 55,
+                "ties": 0,
+                "pct": ".577"
+              },
+              "score": 12,
+              "isWinner": true,
+              "splitSquad": false,
+              "seriesNumber": 43
+            },
+            "home": {
+              "team": {
+                "id": 108,
+                "name": "Los Angeles Angels",
+                "link": "/api/v1/teams/108"
+              },
+              "leagueRecord": {
+                "wins": 61,
+                "losses": 68,
+                "ties": 0,
+                "pct": ".473"
+              },
+              "score": 1,
+              "isWinner": false,
+              "splitSquad": false,
+              "seriesNumber": 42
+            }
+          },
+          "venue": {
+            "id": 1,
+            "name": "Angel Stadium",
+            "link": "/api/v1/venues/1"
+          },
+          "content": {
+            "link": "/api/v1/game/776618/content"
+          },
+          "isTie": false,
+          "gameNumber": 1,
+          "publicFacing": true,
+          "doubleHeader": "N",
+          "gamedayType": "P",
+          "tiebreaker": "N",
+          "calendarEventID": "14-776618-2025-08-23",
+          "seasonDisplay": "2025",
+          "dayNight": "night",
+          "scheduledInnings": 9,
+          "reverseHomeAwayStatus": false,
+          "inningBreakLength": 120,
+          "gamesInSeries": 3,
+          "seriesGameNumber": 2,
+          "seriesDescription": "Regular Season",
+          "recordSource": "S",
+          "ifNecessary": "N",
+          "ifNecessaryDescription": "Normal Game"
+        }
+      ],
+      "events": []
+    }
+  ]
+}

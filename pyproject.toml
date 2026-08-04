@@ -1,0 +1,62 @@
+[tool.poetry]
+name = "mlb-stats-visualizer"
+version = "0.1.0"
+description = "Interactive MLB statistics visualization web application"
+authors = ["Matthew Spah <spahmatthew@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115.0"
+uvicorn = { extras = ["standard"], version = "^0.34.0" }
+jinja2 = "^3.1.0"
+pydantic-settings = "^2.7.0"
+python-mlb-statsapi = "^0.8.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.0"
+pytest-cov = "^6.0.0"
+httpx = "^0.28.0"
+ruff = "^0.9.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--cov=app", "--cov-report=term-missing"]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

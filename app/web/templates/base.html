@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
+    <style>
+      :root {
+        --bg: #f7f4ef;
+        --text: #1a1a1a;
+        --muted: #4a4a4a;
+        --accent: #0b3d2e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background: linear-gradient(160deg, #f7f4ef 0%, #e8efe9 100%);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+      }
+
+      main {
+        max-width: 40rem;
+      }
+
+      h1 {
+        font-size: 2rem;
+        margin: 0 0 0.75rem;
+        color: var(--accent);
+      }
+
+      p {
+        margin: 0 0 0.75rem;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      .status {
+        margin-top: 1.5rem;
+        font-size: 0.95rem;
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main>{% block content %}{% endblock %}</main>
+  </body>
+</html>
