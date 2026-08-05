@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     app_name: str = "mlb-stats-visualizer"
     environment: str = "development"
     debug: bool = True
+    database_url: str = "sqlite:///./mlb_visualizer.db"
 
 
 @lru_cache
