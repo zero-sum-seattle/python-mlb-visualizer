@@ -277,6 +277,9 @@ Extra-inning games simply report more innings played than scheduled.
 
 ## 9. Recommendation for Milestone 2 ingestion
 
+Milestone 2 implemented team-season persistence as described in
+`docs/team-season-ingestion.md`. Summary:
+
 - Ingest per team-season with `get_team_game_batting_lines`; three requests per
   team-season means a full league season is 90 requests, which needs no
   batching, caching, or background worker.

@@ -9,17 +9,18 @@ Interactive MLB statistics visualization web application powered by
 
 **Milestone 1 — Team game-level data feasibility spike** is complete.
 
+**Milestone 2 — Database persistence and team-season ingestion** is complete.
+
 Milestone 0 provides a FastAPI application with Jinja2 templates, Pydantic
 Settings configuration, pytest coverage, Ruff linting/formatting, and GitHub
 Actions CI.
 
-Milestone 1 adds the first MLB data path: `python-mlb-statsapi` is now an
-application dependency, and the project can retrieve **normalized team
-game-level hitting data** for a selected team and season. Every completed
-regular-season game becomes one typed `TeamGameBattingLine` record with the
-game, team, opponent, home/away, hits, runs, and status. Persistence,
-analytics, and charting are still deferred to later milestones — there is no
-database and no new web page or API endpoint.
+Milestone 1 adds the first MLB data path: normalized `TeamGameBattingLine`
+records from the live MLB Stats API (or fixtures in tests).
+
+Milestone 2 adds SQLite persistence with SQLAlchemy 2 and Alembic, a
+team-season ingestion service, and an import CLI. Charting and web database
+integration remain deferred.
 
 ## Planned MVP
 
@@ -29,7 +30,8 @@ A local web application that:
 - Presents interactive baseball statistics visualizations
 - Runs with a clean Python web stack (FastAPI + Jinja2)
 
-Later milestones will add persistence and visualization libraries.
+Later milestones will add visualization libraries and web integration for
+persisted data.
 
 ## Technology stack
 
@@ -40,6 +42,9 @@ Later milestones will add persistence and visualization libraries.
 | Web framework | FastAPI |
 | Templates | Jinja2 |
 | MLB data | python-mlb-statsapi |
+| Database | SQLite |
+| ORM | SQLAlchemy 2 |
+| Migrations | Alembic |
 | Configuration | Pydantic Settings |
 | Testing | pytest, httpx |
 | Lint / format | Ruff |
@@ -72,6 +77,25 @@ Optionally copy the example environment file (defaults work without it):
 cp .env.example .env
 ```
 
+### Database configuration
+
+Default database URL (no `.env` required):
+
+```text
+sqlite:///./mlb_visualizer.db
+```
+
+Override with `DATABASE_URL` in `.env` or the environment. Alembic and the
+application read the same `Settings.database_url` value.
+
+Apply the schema:
+
+```bash
+poetry run alembic upgrade head
+```
+
+The database file is created relative to the project root when first used.
+
 ## Local development
 
 Start the development server:
@@ -89,8 +113,7 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 Milestone 1 retrieves one normalized batting line per completed regular-season
 game for a selected team and season. The reusable code lives in
-`app/services/team_game_logs.py` and `app/schemas/games.py`; the command-line
-script is only a thin inspection wrapper around it.
+`app/services/team_game_logs.py` and `app/schemas/games.py`.
 
 ```python
 from app.services.team_game_logs import get_team_game_batting_lines
@@ -98,7 +121,7 @@ from app.services.team_game_logs import get_team_game_batting_lines
 lines = get_team_game_batting_lines(team_id=136, season=2025)
 ```
 
-### Inspection command
+### Inspection command (no persistence)
 
 ```bash
 poetry run python scripts/inspect_game_logs.py --team-id 136 --season 2025
@@ -107,93 +130,66 @@ poetry run python scripts/inspect_game_logs.py --team-id 136 --season 2025
 Options: `--team-id` and `--season` are required; `--limit N` shows only the
 first N games and `--format json` emits Pydantic-serialized JSON on stdout.
 
-Example output shape (values are illustrative):
+This script calls the live MLB Stats API and is not part of `poetry run pytest`.
 
-```text
-2025-03-27 | 778547 | Seattle Mariners vs Athletics | home | H: 5 | R: 4 | Final
-2025-04-04 | 778444 | Seattle Mariners at San Francisco Giants | away | H: 15 | R: 9 | Final
-2025-08-19 | 776691 (G1) | Chicago Cubs vs Milwaukee Brewers | home | H: 8 | R: 6 | Final
+### Team-season import (Milestone 2)
 
-Team: Seattle Mariners
-Season: 2025
-Completed games: 162
-Total hits: 1345
-Average hits per game: 8.30
+Persist one team-season after migrations:
+
+```bash
+poetry run alembic upgrade head
+poetry run python scripts/import_team_season.py --team-id 136 --season 2025
 ```
 
-This script is the manual integration check for the data path. It calls the live
-MLB Stats API, so it is not part of `poetry run pytest` and never runs in CI.
+First run on an empty table inserts every fetched game:
+
+```text
+Team: Seattle Mariners
+Season: 2025
+Fetched: 162
+Inserted: 162
+Updated: 0
+Unchanged: 0
+```
+
+A second identical run is idempotent:
+
+```text
+Fetched: 162
+Inserted: 0
+Updated: 0
+Unchanged: 162
+```
+
+JSON output:
+
+```bash
+poetry run python scripts/import_team_season.py \
+  --team-id 136 --season 2025 --format json
+```
+
+**Unique key:** `(team_id, game_pk)` — one row per team per game.
+
+**Upsert behavior:** compare persisted baseball fields; insert new rows, update
+changed rows, leave identical rows untouched (`updated_at` does not change on
+unchanged rows).
+
+**No automatic deletion:** rows already stored but missing from the latest MLB
+response are kept. See `docs/team-season-ingestion.md`.
 
 ### Selected retrieval strategy
 
 Team hitting `gameLog` splits joined on `gamePk` with a single team schedule
-request:
-
-| Call | Purpose |
-| --- | --- |
-| `Mlb.get_team(team_id, season=season)` | Confirm the id is an MLB team and read its name for that season |
-| `Mlb.get_team_stats(stats=["gameLog"], groups=["hitting"], gameType="R")` | Per-game hits, runs, home/away, opponent id, date |
-| `Mlb.get_schedule(gameTypes="R")` | Status, opponent name, game number, doubleheader flag, scheduled innings |
-
-Three requests per team-season, no matter how many games were played. It was
-chosen over *schedule + box score* and *schedule + linescore* because those need
-one extra request per game (163 for a full season), and the box score exposes
-team hits only through an untyped `team_stats["batting"]["hits"]` dictionary. The
-`gameLog` splits alone are not enough — the package model drops the game number,
-and the payload has no game status and no opponent name — which is why the
-schedule half of the alternatives is kept. `schedule?hydrate=linescore` would be
-a single request, but `ScheduleGames` has no `linescore` field and the package
-discards it.
-
-`docs/team-game-data-spike.md` records the full investigation, including the
-measured request counts and field-by-field findings.
+request. See `docs/team-game-data-spike.md` for the full investigation.
 
 ### Cross-source validation
 
 The batting numbers come from the game log and the game context comes from the
-schedule, so the service validates the values the two sources share for every
-game instead of assuming they agree. A disagreement raises `TeamGameDataError`
-naming the `gamePk`, the invariant, and both conflicting values:
-
-- `split.team.id` matches the requested team id
-- `split.date` matches `ScheduleGames.official_date`, compared as parsed dates
-- `split.opponent.id` matches the opponent side of the schedule entry
-- `split.is_home` matches the side of the schedule entry holding the team id
-- `split.stat.runs` matches the selected side's schedule `score`, when that
-  optional score is present
-
-Team names are excluded from the comparison on purpose: the game log reports the
-franchise's current name while the team lookup reports its name for the requested
-season, so they legitimately differ for a renamed club.
-
-A repeated `gamePk` in the game log is accepted only when both splits normalize
-to identical records; conflicting duplicates raise `TeamGameDataError` rather
-than silently preferring the first or last value.
-
-These checks turn a future upstream field change or package-model change into a
-loud failure instead of a silently wrong record.
+schedule. Disagreements raise `TeamGameDataError`.
 
 ### Edge cases and limitations
 
-- A game counts as completed only when the schedule's `codedGameState` is `F`
-  (Final) or `O` (Game Over), which includes rain-shortened *Completed Early*
-  games. `abstractGameState` is not used: MLB reports it as `Final` for
-  postponed and cancelled games too.
-- Postponed, cancelled, suspended, and in-progress games are excluded.
-- Both games of a doubleheader are kept as separate records. Records sort by
-  date, then game number, then game id, because game ids do not always follow
-  game numbers within a doubleheader.
-- A postponed or suspended game keeps its `gamePk` when it is made up or
-  resumed, so the same game can appear twice in one schedule. The completed
-  entry wins and each game is emitted once.
-- A suspended game that is resumed is reported once, dated its original official
-  date. A suspended game that is never resumed is excluded; the 2025 season
-  contained none, so that path is covered by fixture data only.
-- Nothing assumes nine innings; `scheduled_innings` is carried through. The 2021
-  Mariners return 5 seven-inning games alongside 157 nine-inning games.
-- Team ids are the identity. Names are display values requested for the season
-  under inspection, so team 133 reads `Oakland Athletics` for 2024 and
-  `Athletics` for 2025.
+Same as Milestone 1 (completed states, doubleheaders, postponements, etc.).
 
 ## Testing
 
@@ -201,9 +197,8 @@ loud failure instead of a silently wrong record.
 poetry run pytest
 ```
 
-The suite is fully offline. MLB payload fixtures live in
-`tests/fixtures/team_game_logs/` and the `mlbstatsapi.Mlb` client is replaced at
-the service boundary, so no test calls the MLB Stats API.
+The suite is fully offline. Migration and repository tests use temporary SQLite
+files and real Alembic upgrades.
 
 ## Lint and formatting
 
@@ -217,16 +212,30 @@ poetry run ruff format --check .
 
 ```text
 .
+├── alembic/
+│   ├── versions/
+│   │   └── 166b6424e4f9_create_team_game_batting_lines.py
+│   ├── env.py
+│   └── script.py.mako
+├── alembic.ini
 ├── app/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── config.py
+│   ├── database/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── engine.py
+│   │   ├── models.py
+│   │   └── repositories.py
 │   ├── schemas/
 │   │   ├── __init__.py
-│   │   └── games.py
+│   │   ├── games.py
+│   │   └── ingestion.py
 │   ├── services/
 │   │   ├── __init__.py
-│   │   └── team_game_logs.py
+│   │   ├── team_game_logs.py
+│   │   └── team_season_ingestion.py
 │   └── web/
 │       ├── __init__.py
 │       ├── routes.py
@@ -234,19 +243,21 @@ poetry run ruff format --check .
 │           ├── base.html
 │           └── index.html
 ├── scripts/
-│   └── inspect_game_logs.py
+│   ├── inspect_game_logs.py
+│   └── import_team_season.py
 ├── docs/
-│   └── team-game-data-spike.md
+│   ├── team-game-data-spike.md
+│   └── team-season-ingestion.md
 ├── tests/
-│   ├── __init__.py
+│   ├── conftest.py
 │   ├── fixtures/
 │   │   └── team_game_logs/
-│   │       ├── cubs_2025_hitting_game_log.json
-│   │       ├── cubs_2025_schedule.json
-│   │       ├── edge_cases_hitting_game_log.json
-│   │       └── edge_cases_schedule.json
 │   ├── test_game_schemas.py
+│   ├── test_import_team_season.py
+│   ├── test_migrations.py
+│   ├── test_repositories.py
 │   ├── test_team_game_logs.py
+│   ├── test_team_season_ingestion.py
 │   └── test_web.py
 ├── .github/
 │   └── workflows/
@@ -260,9 +271,8 @@ poetry run ruff format --check .
 
 ## Later milestones
 
-Persistence (database and migrations), analytics, and visualization libraries
-will be added in later milestones. The project intentionally excludes those
-dependencies for now.
+Visualization libraries, league-wide ingestion, and web pages backed by the
+database will be added in later milestones.
 
 ## Disclaimer
 
