@@ -101,8 +101,10 @@ def build_team_hits_figure(analysis: TeamHitsAnalysis) -> go.Figure:
 
     figure.update_layout(
         template="plotly_white",
-        margin={"l": 56, "r": 24, "t": 16, "b": 56},
-        height=460,
+        # Axis automargin sizes the gutters, which keeps the plot area as wide
+        # as possible on a narrow phone screen.
+        margin={"l": 8, "r": 8, "t": 8, "b": 8},
+        height=440,
         hovermode="closest",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -113,21 +115,24 @@ def build_team_hits_figure(analysis: TeamHitsAnalysis) -> go.Figure:
             "y": 1.02,
             "xanchor": "left",
             "x": 0,
+            "font": {"size": 12},
         },
         xaxis={
-            "title": {"text": X_AXIS_TITLE},
+            "title": {"text": X_AXIS_TITLE, "standoff": 8},
             "gridcolor": _GRID,
             "zeroline": False,
             "rangemode": "tozero",
+            "automargin": True,
         },
         yaxis={
-            "title": {"text": Y_AXIS_TITLE},
+            "title": {"text": Y_AXIS_TITLE, "standoff": 8},
             "gridcolor": _GRID,
             "zeroline": False,
             "rangemode": "tozero",
             # Whole numbers of hits; the range still grows with the data.
             "tickformat": "d",
             "dtick": 2,
+            "automargin": True,
         },
     )
     return figure

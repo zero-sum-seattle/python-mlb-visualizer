@@ -11,6 +11,8 @@ Interactive MLB statistics visualization web application powered by
 
 **Milestone 2 — Database persistence and team-season ingestion** is complete.
 
+**Milestone 3 — Team hits web visualization** is complete.
+
 Milestone 0 provides a FastAPI application with Jinja2 templates, Pydantic
 Settings configuration, pytest coverage, Ruff linting/formatting, and GitHub
 Actions CI.
@@ -19,8 +21,11 @@ Milestone 1 adds the first MLB data path: normalized `TeamGameBattingLine`
 records from the live MLB Stats API (or fixtures in tests).
 
 Milestone 2 adds SQLite persistence with SQLAlchemy 2 and Alembic, a
-team-season ingestion service, and an import CLI. Charting and web database
-integration remain deferred.
+team-season ingestion service, and an import CLI.
+
+Milestone 3 adds the first visualization page: a team's hits per game with a
+trailing rolling average, drawn with Plotly from data already in SQLite. See
+[docs/team-hits-visualization.md](docs/team-hits-visualization.md).
 
 ## Planned MVP
 
@@ -29,9 +34,6 @@ A local web application that:
 - Retrieves MLB data through `python-mlb-statsapi`
 - Presents interactive baseball statistics visualizations
 - Runs with a clean Python web stack (FastAPI + Jinja2)
-
-Later milestones will add visualization libraries and web integration for
-persisted data.
 
 ## Technology stack
 
@@ -42,6 +44,7 @@ persisted data.
 | Web framework | FastAPI |
 | Templates | Jinja2 |
 | MLB data | python-mlb-statsapi |
+| Charts | Plotly |
 | Database | SQLite |
 | ORM | SQLAlchemy 2 |
 | Migrations | Alembic |
@@ -98,16 +101,54 @@ The database file is created relative to the project root when first used.
 
 ## Local development
 
-Start the development server:
+Apply migrations, import at least one team-season, then start the server:
 
 ```bash
+poetry run alembic upgrade head
+poetry run python scripts/import_team_season.py --team-id 136 --season 2025
 poetry run uvicorn app.main:app --reload
 ```
 
 Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-- `/` — foundation HTML page
+- `/` — team hitting trends
 - `/health` — JSON health check
+
+## Team hitting trends page
+
+The homepage charts one team's hits per game for one season, with a trailing
+rolling average and the team's season average.
+
+```text
+http://127.0.0.1:8000/?team_id=136&season=2025&window=15
+```
+
+| Parameter | Meaning | Default |
+| --- | --- | --- |
+| `team_id` | MLB team id that has been imported | Seattle (136) when stored, otherwise the first team alphabetically |
+| `season` | season imported for that team | the most recent stored season |
+| `window` | rolling window: `5`, `10`, `15`, or `30` | `15` |
+
+Submitting the controls produces a shareable URL, so a chart can be linked
+directly.
+
+**The page reads SQLite only.** No web request touches the MLB Stats API;
+importing data is always the explicit CLI step above. Selectors list only the
+team-seasons that are actually stored locally.
+
+**Rolling average.** Trailing, not centered: the value at game N averages the
+`window` most recent games including game N. Early-season games average every
+game played so far rather than showing a gap.
+
+**No MLB-wide average.** The database holds only explicitly imported
+team-seasons, so a league average calculated from it would describe whichever
+teams happen to be stored rather than the league. The third series is the
+team's own season average. League comparison is deferred until league-wide
+ingestion is defined.
+
+If the database is empty, the page explains how to import a team-season. If
+migrations have not been applied, it asks for `poetry run alembic upgrade head`
+instead of failing with a traceback.
 
 ## Team game-level hitting data
 
@@ -222,6 +263,9 @@ poetry run ruff format --check .
 │   ├── __init__.py
 │   ├── main.py
 │   ├── config.py
+│   ├── analytics/
+│   │   ├── __init__.py
+│   │   └── team_hitting.py
 │   ├── database/
 │   │   ├── __init__.py
 │   │   ├── base.py
@@ -230,6 +274,8 @@ poetry run ruff format --check .
 │   │   └── repositories.py
 │   ├── schemas/
 │   │   ├── __init__.py
+│   │   ├── analytics.py
+│   │   ├── catalog.py
 │   │   ├── games.py
 │   │   └── ingestion.py
 │   ├── services/
@@ -238,24 +284,41 @@ poetry run ruff format --check .
 │   │   └── team_season_ingestion.py
 │   └── web/
 │       ├── __init__.py
+│       ├── charts.py
+│       ├── dependencies.py
+│       ├── errors.py
+│       ├── formatting.py
 │       ├── routes.py
+│       ├── selection.py
+│       ├── static/
+│       │   └── css/
+│       │       └── app.css
 │       └── templates/
 │           ├── base.html
+│           ├── error.html
 │           └── index.html
 ├── scripts/
 │   ├── inspect_game_logs.py
 │   └── import_team_season.py
 ├── docs/
 │   ├── team-game-data-spike.md
+│   ├── team-hits-visualization.md
 │   └── team-season-ingestion.md
 ├── tests/
 │   ├── conftest.py
+│   ├── factories.py
 │   ├── fixtures/
 │   │   └── team_game_logs/
+│   ├── test_analytics_schemas.py
+│   ├── test_analytics_team_hitting.py
+│   ├── test_charts.py
+│   ├── test_formatting.py
 │   ├── test_game_schemas.py
 │   ├── test_import_team_season.py
 │   ├── test_migrations.py
 │   ├── test_repositories.py
+│   ├── test_repositories_catalog.py
+│   ├── test_selection.py
 │   ├── test_team_game_logs.py
 │   ├── test_team_season_ingestion.py
 │   └── test_web.py
@@ -271,8 +334,9 @@ poetry run ruff format --check .
 
 ## Later milestones
 
-Visualization libraries, league-wide ingestion, and web pages backed by the
-database will be added in later milestones.
+League-wide ingestion is the recommended next step, because an honest MLB
+average comparison depends on it. See the recommendation in
+[docs/team-hits-visualization.md](docs/team-hits-visualization.md).
 
 ## Disclaimer
 

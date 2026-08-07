@@ -193,13 +193,15 @@ body {
   font-size: 0.9rem;
 }
 
+/* Plotly will not draw this figure below roughly 27rem, so on a phone the
+   chart scrolls sideways instead of being squeezed until it is unreadable. */
 .chart-card__figure {
   min-width: 0;
   overflow-x: auto;
 }
 
 .chart-card__figure .plotly-graph-div {
-  min-width: 20rem;
+  min-width: 27rem;
 }
 
 /* Summary cards */
