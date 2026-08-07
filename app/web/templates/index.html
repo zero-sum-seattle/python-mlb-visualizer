@@ -8,10 +8,13 @@
   {%- endif -%}
 {% endblock %}
 
-{# plotly.js must be parsed before the figure div's inline bootstrap script. #}
 {% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
   {% if state == "ok" %}
     <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
   {% endif %}
 {% endblock %}
 
@@ -30,6 +33,10 @@
       <pre class="command"><code>{{ import_command }}</code></pre>
     </section>
   {% else %}
+    {# Read by season-selector.js so changing team cannot submit a season that
+       team has no games for. The route validates the pair regardless. #}
+    <script type="application/json" id="team-seasons-data">{{ team_seasons_catalog | tojson }}</script>
+
     <form class="controls card" method="get" action="/">
       <div class="control">
         <label for="team_id">Team</label>
@@ -98,7 +105,8 @@
           one completed game; the {{ rolling_average_label|lower }} covers that
           game and the {{ analysis.rolling_window - 1 }} games before it, and
           early-season points use every game played so far. The dashed line is
-          the team's average for the whole season.
+          the team's average across the completed games currently stored for
+          this season.
         </p>
       </section>
     {% endif %}

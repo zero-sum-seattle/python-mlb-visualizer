@@ -56,10 +56,29 @@ def test_rolling_trace_plots_the_rolling_average(figure) -> None:
     assert list(figure.data[1].y) == pytest.approx([8.0, 6.0, 8.0, 7.5, 7.8])
 
 
+def test_rolling_trace_joins_calculated_points_with_straight_segments(figure) -> None:
+    """Splines would draw averages between games that were never calculated."""
+    assert figure.data[1].line.shape == "linear"
+    assert figure.data[1].line.smoothing is None
+
+
+def test_rolling_trace_is_still_the_dominant_line(figure) -> None:
+    assert figure.data[1].line.width > figure.data[0].line.width
+
+
 def test_season_average_trace_is_a_flat_dashed_reference_line(figure) -> None:
     trace = figure.data[2]
     assert list(trace.y) == pytest.approx([7.8, 7.8])
     assert trace.line.dash == "dash"
+
+
+def test_season_average_trace_reads_the_summary_value() -> None:
+    """The chart and the summary card must not be able to disagree."""
+    analysis = build_team_hits_analysis(make_season([3, 4, 5, 12]), rolling_window=2)
+    figure = build_team_hits_figure(analysis)
+    assert list(figure.data[2].y) == pytest.approx(
+        [analysis.summary.season_average] * 2
+    )
 
 
 def test_season_average_trace_spans_the_whole_season(figure) -> None:

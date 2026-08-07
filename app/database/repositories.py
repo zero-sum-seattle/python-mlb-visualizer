@@ -22,6 +22,21 @@ class DatabaseSchemaMissingError(Exception):
     """The database is reachable but the expected tables do not exist yet."""
 
 
+def _is_missing_team_game_table(error: OperationalError) -> bool:
+    """Tell a missing table apart from any other operational failure.
+
+    Only an absent ``team_game_batting_lines`` means migrations have not been
+    applied. A locked database, an I/O failure, or an unreadable file is an
+    operational problem that ``alembic upgrade head`` would not fix, so those
+    must keep their own error rather than being relabelled.
+    """
+    message = str(error.orig if error.orig is not None else error).lower()
+    return (
+        "no such table" in message
+        and TeamGameBattingLineRecord.__tablename__.lower() in message
+    )
+
+
 def list_available_team_seasons(session: Session) -> list[AvailableTeamSeason]:
     """Return every team-season that has games stored locally.
 
@@ -33,6 +48,9 @@ def list_available_team_seasons(session: Session) -> list[AvailableTeamSeason]:
     ------
     DatabaseSchemaMissingError
         Migrations have not been applied to the configured database.
+    OperationalError
+        Any other operational failure, such as a locked or unreadable
+        database, is left untouched for the caller to handle.
     """
     team_name = func.max(TeamGameBattingLineRecord.team_name).label("team_name")
     games_played = func.count().label("games_played")
@@ -57,6 +75,8 @@ def list_available_team_seasons(session: Session) -> list[AvailableTeamSeason]:
     try:
         rows = session.execute(stmt).all()
     except OperationalError as exc:
+        if not _is_missing_team_game_table(exc):
+            raise
         raise DatabaseSchemaMissingError(
             f"Table {TeamGameBattingLineRecord.__tablename__!r} is missing. "
             f"Apply migrations with: {MIGRATION_HINT}"

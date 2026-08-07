@@ -39,7 +39,6 @@ def make_analysis(**overrides: object) -> TeamHitsAnalysis:
         "team_name": "Seattle Mariners",
         "season": 2025,
         "rolling_window": 15,
-        "season_average": 8.0,
         "points": (make_point(),),
         "summary": make_summary(),
     }
@@ -119,7 +118,6 @@ def test_analysis_rejects_a_summary_that_disagrees_with_the_points() -> None:
         ("team_id", 0),
         ("season", 0),
         ("rolling_window", 0),
-        ("season_average", -1.0),
         ("team_name", ""),
     ],
 )
@@ -131,3 +129,10 @@ def test_analysis_rejects_invalid_values(field: str, value: object) -> None:
 def test_analysis_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         make_analysis(league_average=8.5)
+
+
+def test_analysis_holds_no_season_average_of_its_own() -> None:
+    """The summary is the only place a season average lives."""
+    assert "season_average" not in TeamHitsAnalysis.model_fields
+    with pytest.raises(ValidationError):
+        make_analysis(season_average=8.0)

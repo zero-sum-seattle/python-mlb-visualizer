@@ -1,7 +1,10 @@
 """Tests for the web application: routing, selection, and rendering."""
 
+import json
+import re
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import requests
@@ -19,6 +22,18 @@ from tests.factories import make_season
 BROWSER_HEADERS = {"accept": "text/html,application/xhtml+xml"}
 
 SeedFn = Callable[..., None]
+
+_CATALOG_PATTERN = re.compile(
+    r'<script type="application/json" id="team-seasons-data">(.*?)</script>',
+    re.DOTALL,
+)
+
+
+def embedded_team_seasons(body: str) -> Any:
+    """Parse the team-season catalog the season selector script reads."""
+    match = _CATALOG_PATTERN.search(body)
+    assert match is not None, "the page did not embed a team-season catalog"
+    return json.loads(match.group(1))
 
 
 @pytest.fixture
@@ -261,6 +276,84 @@ def test_query_parameters_survive_in_the_form_selection(
     assert '<option value="30" selected>' in body
 
 
+def test_page_embeds_the_seasons_of_every_team(
+    client: TestClient, seed: SeedFn
+) -> None:
+    seed(hits=[7] * 20)
+    seed(hits=[6] * 20, season=2024)
+    seed(hits=[5] * 20, season=2024, team_id=112, team_name="Chicago Cubs")
+    assert embedded_team_seasons(client.get("/").text) == {
+        "112": [2024],
+        "136": [2025, 2024],
+    }
+
+
+def test_embedded_catalog_is_present_on_the_not_found_page(
+    client: TestClient, seed: SeedFn
+) -> None:
+    seed(hits=[7] * 20)
+    response = client.get("/?team_id=136&season=1998")
+    assert embedded_team_seasons(response.text) == {"136": [2025]}
+
+
+def test_page_loads_the_season_selector_script(
+    client: TestClient, seed: SeedFn
+) -> None:
+    seed(hits=[7] * 20)
+    assert "/static/js/season-selector.js" in client.get("/").text
+
+
+def test_empty_database_page_needs_no_season_selector_script(
+    client: TestClient,
+) -> None:
+    body = client.get("/").text
+    assert "season-selector.js" not in body
+    assert "team-seasons-data" not in body
+
+
+def test_season_selector_script_is_served(client: TestClient) -> None:
+    response = client.get("/static/js/season-selector.js")
+    assert response.status_code == 200
+    assert "team-seasons-data" in response.text
+    assert 'addEventListener("change"' in response.text
+
+
+def test_a_season_from_another_team_is_still_rejected_by_the_server(
+    client: TestClient, seed: SeedFn
+) -> None:
+    """The browser script is a convenience; the route stays defensive."""
+    seed(hits=[7] * 20)
+    seed(hits=[5] * 20, season=2024, team_id=112, team_name="Chicago Cubs")
+    response = client.get("/?team_id=112&season=2025")
+    assert response.status_code == 404
+    assert "No 2025 games are stored for Chicago Cubs" in response.text
+    assert "Stored seasons: 2024" in response.text
+
+
+def test_each_team_can_be_loaded_at_its_own_season(
+    client: TestClient, seed: SeedFn
+) -> None:
+    seed(hits=[7] * 20)
+    seed(hits=[5] * 20, season=2024, team_id=112, team_name="Chicago Cubs")
+    seattle = client.get("/?team_id=136&season=2025&window=5")
+    chicago = client.get("/?team_id=112&season=2024&window=5")
+    assert seattle.status_code == 200
+    assert "Seattle Mariners — Hits per Game" in seattle.text
+    assert chicago.status_code == 200
+    assert "Chicago Cubs — Hits per Game" in chicago.text
+    assert "2024 regular season" in chicago.text
+    assert "5-Game Average" in chicago.text
+
+
+def test_explanation_does_not_claim_a_complete_season(
+    client: TestClient, seed: SeedFn
+) -> None:
+    seed(hits=[7] * 20)
+    body = client.get("/").text
+    assert "average for the whole season" not in body
+    assert "completed games currently stored for" in body
+
+
 def test_no_web_route_calls_the_mlb_api(
     client: TestClient, seed: SeedFn, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -275,6 +368,7 @@ def test_no_web_route_calls_the_mlb_api(
     assert client.get("/?team_id=136&season=2025&window=15").status_code == 200
     assert client.get("/").status_code == 200
     assert client.get("/health").status_code == 200
+    assert client.get("/static/js/season-selector.js").status_code == 200
 
 
 def test_missing_schema_points_at_the_migration_command(tmp_path: Path) -> None:

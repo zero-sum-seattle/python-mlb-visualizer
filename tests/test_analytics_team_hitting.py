@@ -91,8 +91,12 @@ def test_rolling_average_is_trailing_not_centered() -> None:
 
 def test_season_average_is_total_hits_over_completed_games() -> None:
     analysis = build_team_hits_analysis(make_season([5, 10, 6]), rolling_window=15)
-    assert analysis.season_average == pytest.approx(7.0)
     assert analysis.summary.season_average == pytest.approx(7.0)
+
+
+def test_summary_is_the_only_season_average_on_the_analysis() -> None:
+    analysis = build_team_hits_analysis(make_season([5, 10, 6]), rolling_window=15)
+    assert not hasattr(analysis, "season_average")
 
 
 def test_recent_average_uses_the_most_recent_window() -> None:
@@ -219,4 +223,4 @@ def test_window_larger_than_the_season_averages_every_game() -> None:
 def test_analysis_is_immutable() -> None:
     analysis = build_team_hits_analysis(make_season([2, 4]), rolling_window=5)
     with pytest.raises(ValueError, match="frozen"):
-        analysis.season_average = 99.0
+        analysis.rolling_window = 99

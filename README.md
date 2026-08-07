@@ -130,7 +130,9 @@ http://127.0.0.1:8000/?team_id=136&season=2025&window=15
 | `window` | rolling window: `5`, `10`, `15`, or `30` | `15` |
 
 Submitting the controls produces a shareable URL, so a chart can be linked
-directly.
+directly. Choosing a different team updates the season selector in the browser
+to that team's stored seasons, so the form cannot submit a combination that has
+no data. The route validates the pair on every request regardless.
 
 **The page reads SQLite only.** No web request touches the MLB Stats API;
 importing data is always the explicit CLI step above. Selectors list only the
@@ -138,13 +140,19 @@ team-seasons that are actually stored locally.
 
 **Rolling average.** Trailing, not centered: the value at game N averages the
 `window` most recent games including game N. Early-season games average every
-game played so far rather than showing a gap.
+game played so far rather than showing a gap. The line joins the calculated
+points with straight segments, so it never implies an average between games.
+
+**Every number describes the stored games.** That may be a season in progress
+or a partial import, so the dashed reference line is the team's average across
+the completed games currently stored, not a guaranteed full season. The
+footer's "Data through" date shows how current the numbers are.
 
 **No MLB-wide average.** The database holds only explicitly imported
 team-seasons, so a league average calculated from it would describe whichever
 teams happen to be stored rather than the league. The third series is the
-team's own season average. League comparison is deferred until league-wide
-ingestion is defined.
+team's own stored-season average. League comparison is deferred until
+league-wide ingestion is defined.
 
 If the database is empty, the page explains how to import a team-season. If
 migrations have not been applied, it asks for `poetry run alembic upgrade head`
@@ -291,8 +299,10 @@ poetry run ruff format --check .
 │       ├── routes.py
 │       ├── selection.py
 │       ├── static/
-│       │   └── css/
-│       │       └── app.css
+│       │   ├── css/
+│       │   │   └── app.css
+│       │   └── js/
+│       │       └── season-selector.js
 │       └── templates/
 │           ├── base.html
 │           ├── error.html
