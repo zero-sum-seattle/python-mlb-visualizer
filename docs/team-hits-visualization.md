@@ -97,11 +97,20 @@ Summary formulas:
 
 | Value | Formula |
 | --- | --- |
-| `games_played` | number of completed games |
-| `season_average` | total hits / completed games |
+| `games_played` | number of completed games stored |
+| `season_average` | total hits / completed games stored |
 | `recent_average` | mean of the last `min(window, games_played)` games |
 | `prior_window_average` | mean of the preceding full window, else `None` |
 | `change_vs_prior_window` | `recent_average - prior_window_average`, else `None` |
+
+Every value describes the games **currently stored**, which may be a season in
+progress, a partial import, or an import that has not been refreshed. Nothing
+on the page claims the database holds a complete season; the footer's "Data
+through" date is what tells a reader how current the numbers are.
+
+`TeamHitsSummary.season_average` is the only season average in the model. The
+chart's reference line and the summary card both read it, so the two cannot
+disagree.
 
 Every calculation keeps ordinary floating-point precision. Rounding happens
 only in `app/web/formatting.py`, for display.
@@ -118,6 +127,11 @@ Three traces, in order:
 | 1 | `Game Hits` | thin grey line, small markers | game-to-game variation |
 | 2 | `{window}-Game Average` | thick teal line | the trend, visually dominant |
 | 3 | `Season Average` | dashed navy horizontal line | reference level |
+
+The rolling average joins its points with straight segments
+(`line.shape: "linear"`). Spline smoothing is deliberately not used: it bows
+between games and would draw averages at positions where no average was
+calculated.
 
 Axes are titled `Season Game Number` and `Hits per Game`. The y axis uses
 integer ticks with `rangemode: tozero` and no hardcoded maximum, so an unusually
@@ -172,6 +186,11 @@ poetry run alembic upgrade head
 
 Tables are never created automatically.
 
+Only a genuinely absent `team_game_batting_lines` is translated that way. A
+locked database, an unreadable file, or any other `OperationalError` keeps its
+own exception, because telling someone to run a migration would send them down
+the wrong path.
+
 ## 8. Team and season selection
 
 `app/web/selection.py` turns the persisted catalog into selector options. Team
@@ -199,9 +218,30 @@ Handling of values that are present but unusable:
 Nothing renders a traceback, and an unstored selection is never silently
 replaced with different data.
 
-Because the form is a plain HTML GET with no JavaScript, changing the team
-without changing the season can request a season that team does not have. That
-lands on the 404 state, which names the seasons that are available.
+### Keeping the season selector in step with the team
+
+Teams do not all have the same stored seasons. With a plain GET form, picking a
+different team while the season selector still shows the previous team's season
+would submit a pair that does not exist and land on the 404 state, even though
+the newly chosen team has perfectly good data.
+
+The page therefore embeds its own catalog next to the form:
+
+```html
+<script type="application/json" id="team-seasons-data">{"112":[2024],"136":[2025,2024]}</script>
+```
+
+`build_team_seasons_catalog` produces that mapping from the same `TeamOption`
+list the selectors are built from, and `app/web/static/js/season-selector.js`
+rebuilds the season options on `change`, selecting the newest season for the
+newly chosen team. The rolling window is untouched. No request is made to
+populate the selector, and no combination is hardcoded.
+
+This is a convenience for the normal click-through path only. The route still
+validates the pair on every request, so a hand-typed
+`/?team_id=112&season=2025` for a team that only has 2024 continues to render
+the 404 state. The script degrades to the previous behaviour if JavaScript is
+unavailable.
 
 ## 9. Empty database behavior
 

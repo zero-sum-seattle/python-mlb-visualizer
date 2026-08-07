@@ -42,12 +42,18 @@ class TeamHitsPoint(BaseModel):
 
 
 class TeamHitsSummary(BaseModel):
-    """Headline numbers describing a team-season's hitting."""
+    """Headline numbers describing a team-season's hitting.
+
+    ``season_average`` is the single authoritative season average; the chart's
+    reference line and the summary card both read it from here.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     games_played: int = Field(ge=1, description="Completed games analysed.")
-    season_average: float = Field(ge=0, description="Hits per game across the season.")
+    season_average: float = Field(
+        ge=0, description="Hits per game across the stored completed games."
+    )
     recent_average: float = Field(
         ge=0,
         description="Hits per game over the most recent rolling window.",
@@ -84,7 +90,6 @@ class TeamHitsAnalysis(BaseModel):
     team_name: str = Field(min_length=1, description="Historical name for the season.")
     season: int = Field(gt=0, description="Season analysed.")
     rolling_window: int = Field(ge=1, description="Games in the trailing window.")
-    season_average: float = Field(ge=0, description="Hits per game across the season.")
     points: tuple[TeamHitsPoint, ...] = Field(
         min_length=1, description="Games in chart order."
     )

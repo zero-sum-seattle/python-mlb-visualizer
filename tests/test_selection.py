@@ -1,7 +1,12 @@
 """Tests for team and season selector resolution."""
 
 from app.schemas.catalog import AvailableTeamSeason
-from app.web.selection import build_team_options, select_season, select_team
+from app.web.selection import (
+    build_team_options,
+    build_team_seasons_catalog,
+    select_season,
+    select_team,
+)
 
 MARINERS = AvailableTeamSeason(
     team_id=136, team_name="Seattle Mariners", season=2025, games_played=162
@@ -88,3 +93,30 @@ def test_requested_season_is_used_when_stored() -> None:
 def test_requested_season_that_is_not_stored_resolves_to_none() -> None:
     option = build_team_options([MARINERS])[0]
     assert select_season(option, 1998) is None
+
+
+CUBS_2024 = AvailableTeamSeason(
+    team_id=112, team_name="Chicago Cubs", season=2024, games_played=162
+)
+
+
+def test_catalog_maps_each_team_to_its_own_seasons() -> None:
+    options = build_team_options([MARINERS, MARINERS_2024, CUBS_2024])
+    assert build_team_seasons_catalog(options) == {
+        "112": [2024],
+        "136": [2025, 2024],
+    }
+
+
+def test_catalog_lists_seasons_newest_first() -> None:
+    options = build_team_options([MARINERS_2024, MARINERS])
+    assert build_team_seasons_catalog(options)["136"] == [2025, 2024]
+
+
+def test_catalog_keys_are_strings_to_match_a_select_value() -> None:
+    catalog = build_team_seasons_catalog(build_team_options([MARINERS]))
+    assert list(catalog) == ["136"]
+
+
+def test_catalog_is_empty_without_persisted_data() -> None:
+    assert build_team_seasons_catalog([]) == {}

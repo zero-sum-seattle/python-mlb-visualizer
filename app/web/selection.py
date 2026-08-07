@@ -44,6 +44,18 @@ def build_team_options(
     return options
 
 
+def build_team_seasons_catalog(
+    options: Sequence[TeamOption],
+) -> dict[str, list[int]]:
+    """Map each team id to its stored seasons, newest first.
+
+    The page embeds this so the season selector can be rebuilt in the browser
+    when the team changes, without a second request. Keys are strings because
+    they are compared against a ``<select>`` value.
+    """
+    return {str(option.team_id): list(option.seasons) for option in options}
+
+
 def select_team(
     options: Sequence[TeamOption],
     requested_team_id: int | None,
