@@ -97,6 +97,38 @@ Never silently fabricate source data.
 
 ---
 
+# Operational entry points
+
+CLI scripts, scheduled jobs, admin operations, and future background tasks are
+entry points into reusable application services.
+
+They are not the application architecture themselves.
+
+Code under `scripts/` should remain thin.
+
+A script may:
+
+- parse command-line arguments
+- construct configuration and dependencies
+- invoke an application service
+- format results for stdout/stderr
+- select an appropriate process exit code
+
+A script should not contain substantial:
+
+- MLB normalization logic
+- database business rules
+- ingestion algorithms
+- analytics
+- completeness rules
+- application-domain decisions
+
+Prefer:
+
+```text
+CLI script ─────────┐
+scheduled job ──────┼──► reusable service ─► repositories / MLB
+admin operation ────┘
 ## Database and repositories
 
 Location:
