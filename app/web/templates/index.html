@@ -1,12 +1,113 @@
 {% extends "base.html" %}
 
-{% block title %}{{ app_name }} — Foundation{% endblock %}
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Hitting Trends
+  {%- else -%}
+    Team Hitting Trends
+  {%- endif -%}
+{% endblock %}
+
+{# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+{% block head %}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+{% endblock %}
 
 {% block content %}
-  <h1>{{ app_name }}</h1>
-  <p class="status">The application foundation is working.</p>
-  <p>
-    An interactive MLB statistics visualization project powered by
-    python-mlb-statsapi.
-  </p>
+  <section class="page-intro">
+    <h1>Team Hitting Trends</h1>
+    <p class="page-intro__subtitle">
+      See how a team's hitting changes throughout the season.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    <form class="controls card" method="get" action="/">
+      <div class="control">
+        <label for="team_id">Team</label>
+        <select id="team_id" name="team_id">
+          {%- for team in teams %}
+            {%- set is_selected = selected_team and team.team_id == selected_team.team_id %}
+            <option value="{{ team.team_id }}"{% if is_selected %} selected{% endif %}>{{ team.team_name }}</option>
+          {%- endfor %}
+        </select>
+      </div>
+
+      <div class="control">
+        <label for="season">Season</label>
+        <select id="season" name="season">
+          {%- for season_option in (selected_team.seasons if selected_team else []) %}
+            <option value="{{ season_option }}"{% if season_option == selected_season %} selected{% endif %}>{{ season_option }}</option>
+          {%- endfor %}
+        </select>
+      </div>
+
+      <div class="control">
+        <label for="window">Rolling Window</label>
+        <select id="window" name="window">
+          {%- for window_option in window_options %}
+            <option value="{{ window_option }}"{% if window_option == selected_window %} selected{% endif %}>{{ window_option }} Games</option>
+          {%- endfor %}
+        </select>
+      </div>
+
+      <div class="control control--action">
+        <button type="submit">Update chart</button>
+      </div>
+    </form>
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% else %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} — Hits per Game</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure">{{ chart_html | safe }}</div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="card about">
+        <h2>About this chart</h2>
+        <p>
+          The rolling average smooths out unusually high or low individual games
+          so the team's broader offensive trend is easier to see. Each point is
+          one completed game; the {{ rolling_average_label|lower }} covers that
+          game and the {{ analysis.rolling_window - 1 }} games before it, and
+          early-season points use every game played so far. The dashed line is
+          the team's average for the whole season.
+        </p>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <p>Data through {{ data_through }}.</p>
+  {% endif %}
+  <p>Source: MLB Stats API via python-mlb-statsapi.</p>
 {% endblock %}
