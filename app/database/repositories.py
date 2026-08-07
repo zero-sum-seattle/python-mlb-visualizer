@@ -2,16 +2,75 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.database.models import TeamGameBattingLineRecord
+from app.schemas.catalog import AvailableTeamSeason
 from app.schemas.games import TeamGameBattingLine
 from app.schemas.ingestion import TeamGamePersistenceResult
+
+MIGRATION_HINT = "poetry run alembic upgrade head"
 
 
 class TeamGamePersistenceError(Exception):
     """A persistence operation encountered an invalid or conflicting identity."""
+
+
+class DatabaseSchemaMissingError(Exception):
+    """The database is reachable but the expected tables do not exist yet."""
+
+
+def list_available_team_seasons(session: Session) -> list[AvailableTeamSeason]:
+    """Return every team-season that has games stored locally.
+
+    One grouped query answers what the UI selectors need: which teams exist,
+    the name each was stored under for a given season, and which seasons that
+    team has. Many game rows collapse into one entry per team-season.
+
+    Raises
+    ------
+    DatabaseSchemaMissingError
+        Migrations have not been applied to the configured database.
+    """
+    team_name = func.max(TeamGameBattingLineRecord.team_name).label("team_name")
+    games_played = func.count().label("games_played")
+    stmt = (
+        select(
+            TeamGameBattingLineRecord.team_id,
+            TeamGameBattingLineRecord.season,
+            team_name,
+            games_played,
+        )
+        .group_by(
+            TeamGameBattingLineRecord.team_id,
+            TeamGameBattingLineRecord.season,
+        )
+        .order_by(
+            team_name,
+            TeamGameBattingLineRecord.team_id,
+            TeamGameBattingLineRecord.season.desc(),
+        )
+    )
+
+    try:
+        rows = session.execute(stmt).all()
+    except OperationalError as exc:
+        raise DatabaseSchemaMissingError(
+            f"Table {TeamGameBattingLineRecord.__tablename__!r} is missing. "
+            f"Apply migrations with: {MIGRATION_HINT}"
+        ) from exc
+
+    return [
+        AvailableTeamSeason(
+            team_id=row.team_id,
+            team_name=row.team_name,
+            season=row.season,
+            games_played=row.games_played,
+        )
+        for row in rows
+    ]
 
 
 def list_team_season(

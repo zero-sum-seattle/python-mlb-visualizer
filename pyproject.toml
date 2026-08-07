@@ -15,6 +15,7 @@ pydantic-settings = "^2.7.0"
 python-mlb-statsapi = "^0.8.0"
 sqlalchemy = "^2.0.0"
 alembic = "^1.14.0"
+plotly = "^6.9.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

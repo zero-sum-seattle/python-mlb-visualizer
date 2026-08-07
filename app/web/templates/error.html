@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}{{ heading }}{% endblock %}
+
+{% block content %}
+  <section class="card notice">
+    <h1>{{ heading }}</h1>
+    <p>{{ message }}</p>
+
+    {% if details %}
+      <ul class="notice__details">
+        {% for detail in details %}
+          <li>{{ detail }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if commands %}
+      {% for command in commands %}
+        <pre class="command"><code>{{ command }}</code></pre>
+      {% endfor %}
+    {% endif %}
+
+    <p><a class="notice__link" href="/">Back to team hitting trends</a></p>
+  </section>
+{% endblock %}
