@@ -72,19 +72,13 @@ def build_team_hits_analysis(
         )
     )
 
-    season_average = sum(hits) / len(hits)
     return TeamHitsAnalysis(
         team_id=ordered[-1].team_id,
         team_name=ordered[-1].team_name,
         season=ordered[-1].season,
         rolling_window=rolling_window,
-        season_average=season_average,
         points=points,
-        summary=_build_summary(
-            hits,
-            rolling_window=rolling_window,
-            season_average=season_average,
-        ),
+        summary=_build_summary(hits, rolling_window=rolling_window),
     )
 
 
@@ -105,12 +99,7 @@ def _trailing_averages(values: list[int], window: int) -> list[float]:
     return averages
 
 
-def _build_summary(
-    hits: list[int],
-    *,
-    rolling_window: int,
-    season_average: float,
-) -> TeamHitsSummary:
+def _build_summary(hits: list[int], *, rolling_window: int) -> TeamHitsSummary:
     games_played = len(hits)
 
     recent = hits[-min(rolling_window, games_played) :]
@@ -127,7 +116,7 @@ def _build_summary(
 
     return TeamHitsSummary(
         games_played=games_played,
-        season_average=season_average,
+        season_average=sum(hits) / games_played,
         recent_average=recent_average,
         prior_window_average=prior_window_average,
         change_vs_prior_window=change_vs_prior_window,

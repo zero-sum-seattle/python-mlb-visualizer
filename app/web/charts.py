@@ -84,14 +84,17 @@ def build_team_hits_figure(analysis: TeamHitsAnalysis) -> go.Figure:
             customdata=hover_data,
             name=rolling_name,
             mode="lines",
-            line={"color": _TEAL, "width": 3.5, "shape": "spline", "smoothing": 0.4},
+            # Straight segments between calculated points. A spline would
+            # overshoot between games and imply averages nobody calculated.
+            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
             hovertemplate=hover_template,
         )
     )
+    season_average = analysis.summary.season_average
     figure.add_trace(
         go.Scatter(
             x=[game_numbers[0], game_numbers[-1]],
-            y=[analysis.season_average, analysis.season_average],
+            y=[season_average, season_average],
             name=SEASON_AVERAGE_TRACE_NAME,
             mode="lines",
             line={"color": _NAVY, "width": 2, "dash": "dash"},

@@ -28,7 +28,12 @@ from app.web.charts import (
 )
 from app.web.dependencies import get_db_session
 from app.web.formatting import build_summary_cards, format_long_date
-from app.web.selection import build_team_options, select_season, select_team
+from app.web.selection import (
+    build_team_options,
+    build_team_seasons_catalog,
+    select_season,
+    select_team,
+)
 
 RollingWindow = Literal[5, 10, 15, 30]
 ROLLING_WINDOW_OPTIONS: tuple[int, ...] = get_args(RollingWindow)
@@ -87,6 +92,7 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
         context: dict[str, Any] = {
             "app_name": settings.app_name,
             "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
             "window_options": ROLLING_WINDOW_OPTIONS,
             "selected_window": window,
             "selected_team": None,

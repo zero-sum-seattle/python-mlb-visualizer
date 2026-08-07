@@ -1,8 +1,11 @@
 """Tests for the read queries that populate the team and season selectors."""
 
+from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.database.engine import build_engine, build_session_factory
@@ -110,12 +113,71 @@ def test_repeated_calls_return_the_same_order(migrated_session: Session) -> None
     assert first == list_available_team_seasons(migrated_session)
 
 
-def test_missing_schema_raises_a_migration_error(tmp_path: Path) -> None:
+@pytest.fixture
+def unmigrated_session(tmp_path: Path) -> Generator[Session]:
+    """Session against a reachable SQLite file that has no tables."""
     engine = build_engine(f"sqlite:///{tmp_path / 'unmigrated.db'}")
     session = build_session_factory(engine)()
     try:
-        with pytest.raises(DatabaseSchemaMissingError, match="alembic upgrade head"):
-            list_available_team_seasons(session)
+        yield session
     finally:
         session.close()
         engine.dispose()
+
+
+def test_missing_table_raises_a_schema_error(unmigrated_session: Session) -> None:
+    with pytest.raises(DatabaseSchemaMissingError):
+        list_available_team_seasons(unmigrated_session)
+
+
+def test_missing_table_error_gives_the_migration_command(
+    unmigrated_session: Session,
+) -> None:
+    with pytest.raises(DatabaseSchemaMissingError, match="alembic upgrade head"):
+        list_available_team_seasons(unmigrated_session)
+
+
+def test_missing_table_error_keeps_the_original_exception_as_its_cause(
+    unmigrated_session: Session,
+) -> None:
+    with pytest.raises(DatabaseSchemaMissingError) as caught:
+        list_available_team_seasons(unmigrated_session)
+    assert isinstance(caught.value.__cause__, OperationalError)
+
+
+def test_an_unreadable_database_is_not_reported_as_a_missing_migration(
+    tmp_path: Path,
+) -> None:
+    """A path that cannot be opened is not something a migration would fix."""
+    engine = build_engine(f"sqlite:///{tmp_path / 'no-such-directory' / 'x.db'}")
+    session = build_session_factory(engine)()
+    try:
+        with pytest.raises(OperationalError) as caught:
+            list_available_team_seasons(session)
+        assert not isinstance(caught.value, DatabaseSchemaMissingError)
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_a_locked_database_is_not_reported_as_a_missing_migration() -> None:
+    locked = OperationalError("SELECT 1", None, Exception("database is locked"))
+    session = Mock(spec=Session)
+    session.execute.side_effect = locked
+
+    with pytest.raises(OperationalError) as caught:
+        list_available_team_seasons(session)
+    assert caught.value is locked
+
+
+def test_a_different_missing_table_is_not_reported_as_a_missing_migration() -> None:
+    """Only our own table's absence means this application needs migrating."""
+    unrelated = OperationalError(
+        "SELECT 1", None, Exception("no such table: alembic_version")
+    )
+    session = Mock(spec=Session)
+    session.execute.side_effect = unrelated
+
+    with pytest.raises(OperationalError) as caught:
+        list_available_team_seasons(session)
+    assert caught.value is unrelated
