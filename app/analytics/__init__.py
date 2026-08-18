@@ -5,9 +5,17 @@ from app.analytics.team_hitting import (
     TeamHitsAnalysisError,
     build_team_hits_analysis,
 )
+from app.analytics.team_strikeouts import (
+    MissingStrikeoutDataError,
+    TeamStrikeoutsAnalysisError,
+    build_team_strikeouts_analysis,
+)
 
 __all__ = [
     "DEFAULT_ROLLING_WINDOW",
+    "MissingStrikeoutDataError",
     "TeamHitsAnalysisError",
+    "TeamStrikeoutsAnalysisError",
     "build_team_hits_analysis",
+    "build_team_strikeouts_analysis",
 ]
