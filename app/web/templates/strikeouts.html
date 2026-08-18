@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Batting Strikeout Trends
+  {%- else -%}
+    Team Batting Strikeout Trends
+  {%- endif -%}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Team Batting Strikeout Trends</h1>
+    <p class="page-intro__subtitle">
+      See how often a team's hitters are striking out as the season progresses.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    {% include "_selector_form.html" %}
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% elif state == "missing_strikeouts" %}
+      <section class="card notice">
+        <h2>This team-season needs to be re-imported</h2>
+        <p>
+          {{ games_missing }} of the {{ games_total }} stored games for
+          {{ selected_team.team_name }} in {{ selected_season }} have no batting
+          strikeout total. They were imported before batting strikeouts were
+          persisted, so their real totals are unknown.
+        </p>
+        <p>
+          They are not charted as zero and the remaining games are not presented
+          as a complete season. Re-import the team-season to fill in the real
+          values from MLB:
+        </p>
+        <pre class="command"><code>{{ reimport_command }}</code></pre>
+        <p>
+          The hits chart is unaffected and still works for this team-season.
+        </p>
+      </section>
+    {% else %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} — Batting Strikeouts per Game</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure">{{ chart_html | safe }}</div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="card about">
+        <h2>About this chart</h2>
+        <p>
+          Each point is the number of times {{ analysis.team_name }}'s hitters
+          struck out in one completed game. These are batting strikeouts, not
+          strikeouts recorded by the team's pitchers. The
+          {{ rolling_average_label|lower }} covers that game and the
+          {{ analysis.rolling_window - 1 }} games before it, and early-season
+          points use every game played so far. The dashed line is the team's
+          average across the completed games currently stored for this season.
+        </p>
+        <p>
+          A higher or lower value describes how many times hitters struck out in
+          each stored completed game. It is not labelled good or bad here:
+          whether more batting strikeouts matter depends on the question being
+          asked and on what else the offense is doing.
+        </p>
+        <h3>What K/Game does not tell you</h3>
+        <p>
+          Strikeouts per game is a count, not a rate. Games contain different
+          numbers of plate appearances: extra innings, long innings, and games
+          shortened by weather all change how many chances hitters got. A game
+          with more opportunities can show more strikeouts without the hitters
+          striking out any more often.
+        </p>
+        <p>
+          Strikeout rate (K%), which divides strikeouts by plate appearances,
+          answers the opportunity-adjusted version of this question and would be
+          the better measure for it. It is deferred until plate appearances are
+          persisted; this page does not estimate it.
+        </p>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <p>Data through {{ data_through }}.</p>
+  {% endif %}
+  <p>Source: MLB Stats API via python-mlb-statsapi.</p>
+{% endblock %}

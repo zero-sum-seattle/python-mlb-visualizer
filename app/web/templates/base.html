@@ -13,6 +13,17 @@
         <span class="brand">MLB Stats Visualizer</span>
         <span class="brand__section">Team Hitting</span>
       </div>
+      {% if nav_links %}
+        <nav class="site-nav" aria-label="Metrics">
+          <div class="shell site-nav__inner">
+            {%- for link in nav_links %}
+              <a class="site-nav__link{% if link.is_current %} site-nav__link--current{% endif %}"
+                 href="{{ link.href }}"
+                 {% if link.is_current %}aria-current="page"{% endif %}>{{ link.label }}</a>
+            {%- endfor %}
+          </div>
+        </nav>
+      {% endif %}
     </header>
 
     <main class="shell page">{% block content %}{% endblock %}</main>

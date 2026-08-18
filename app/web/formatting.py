@@ -3,10 +3,11 @@
 from dataclasses import dataclass
 from datetime import date
 
-from app.schemas.analytics import TeamHitsAnalysis
+from app.schemas.analytics import TeamHitsAnalysis, TeamStrikeoutsAnalysis
 from app.schemas.games import HomeAway
 
 HITS_PER_GAME_CAPTION = "Hits per Game"
+STRIKEOUTS_PER_GAME_CAPTION = "Batting Strikeouts per Game"
 NO_PRIOR_WINDOW_VALUE = "—"
 NO_PRIOR_WINDOW_CAPTION = "Not enough games"
 
@@ -78,6 +79,52 @@ def build_summary_cards(analysis: TeamHitsAnalysis) -> list[SummaryCard]:
             label="Season Avg",
             value=f"{summary.season_average:.2f}",
             caption=HITS_PER_GAME_CAPTION,
+        ),
+        change_card,
+        SummaryCard(
+            label="Games Played",
+            value=f"{summary.games_played}",
+            caption="Completed Games",
+        ),
+    ]
+
+
+def build_strikeout_summary_cards(
+    analysis: TeamStrikeoutsAnalysis,
+) -> list[SummaryCard]:
+    """Round the analysis for display only; the calculations keep full precision.
+
+    The change card is rendered with a plain signed number and no positive or
+    negative styling. More batting strikeouts is not automatically worse for
+    every question a reader might be asking, so the page states the direction
+    and leaves the judgement to them.
+    """
+    window = analysis.rolling_window
+    summary = analysis.summary
+
+    if summary.change_vs_prior_window is None:
+        change_card = SummaryCard(
+            label=f"vs Prior {window}",
+            value=NO_PRIOR_WINDOW_VALUE,
+            caption=NO_PRIOR_WINDOW_CAPTION,
+        )
+    else:
+        change_card = SummaryCard(
+            label=f"vs Prior {window}",
+            value=f"{summary.change_vs_prior_window:+.2f}",
+            caption=STRIKEOUTS_PER_GAME_CAPTION,
+        )
+
+    return [
+        SummaryCard(
+            label=f"Recent {window}-Game Avg",
+            value=f"{summary.recent_average:.2f}",
+            caption=STRIKEOUTS_PER_GAME_CAPTION,
+        ),
+        SummaryCard(
+            label="Season Avg",
+            value=f"{summary.season_average:.2f}",
+            caption=STRIKEOUTS_PER_GAME_CAPTION,
         ),
         change_card,
         SummaryCard(
