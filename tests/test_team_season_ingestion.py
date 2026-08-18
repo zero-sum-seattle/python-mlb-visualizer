@@ -8,11 +8,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database.models import TeamGameBattingLineRecord
+from app.database.repositories import list_team_season, upsert_team_season
 from app.schemas.ingestion import TeamGamePersistenceResult
 from app.services.team_game_logs import (
     TeamGameDataError,
     TeamGameLogError,
     TeamNotFoundError,
+    get_team_game_batting_lines,
 )
 from app.services.team_season_ingestion import (
     TeamSeasonIngestionError,
@@ -246,3 +248,63 @@ def test_team_game_log_error_is_not_wrapped(migrated_session: Session) -> None:
             team_id=CUBS_ID,
             season=SEASON,
         )
+
+
+def test_import_persists_batting_strikeouts(migrated_session: Session) -> None:
+    """The existing command is the only strikeout ingestion path."""
+    ingest_team_season(
+        session=migrated_session,
+        team_id=CUBS_ID,
+        season=SEASON,
+        client=make_client(),
+    )
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert [line.strikeouts for line in stored] == [5, 8, 9, 9, 10, 6]
+
+
+def test_import_backfills_legacy_rows_and_is_then_idempotent(
+    migrated_session: Session,
+) -> None:
+    """Milestone 3.5's regression path, end to end, without touching MLB."""
+    legacy = [
+        line.model_copy(update={"strikeouts": None})
+        for line in get_team_game_batting_lines(CUBS_ID, SEASON, client=make_client())
+    ]
+    upsert_team_season(migrated_session, lines=legacy)
+    migrated_session.commit()
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert all(line.strikeouts is None for line in stored)
+    # ``ingest_team_season`` opens its own transaction, so close the implicit
+    # one the read above started.
+    migrated_session.commit()
+
+    backfill = ingest_team_season(
+        session=migrated_session,
+        team_id=CUBS_ID,
+        season=SEASON,
+        client=make_client(),
+    )
+    assert (backfill.inserted, backfill.updated, backfill.unchanged) == (0, 6, 0)
+
+    again = ingest_team_season(
+        session=migrated_session,
+        team_id=CUBS_ID,
+        season=SEASON,
+        client=make_client(),
+    )
+    assert (again.inserted, again.updated, again.unchanged) == (0, 0, 6)
+
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert [line.strikeouts for line in stored] == [5, 8, 9, 9, 10, 6]
+
+
+def test_import_makes_exactly_three_mlb_requests(migrated_session: Session) -> None:
+    """Strikeouts did not add a fourth request to the team-season strategy."""
+    client = make_client()
+    ingest_team_season(
+        session=migrated_session,
+        team_id=CUBS_ID,
+        season=SEASON,
+        client=client,
+    )
+    assert sorted(client.calls) == ["get_schedule", "get_team", "get_team_stats"]

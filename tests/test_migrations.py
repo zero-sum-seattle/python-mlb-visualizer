@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.database.engine import build_engine
 from tests.conftest import run_alembic_downgrade_base, run_alembic_upgrade
 
-REVISION_HEAD = "166b6424e4f9"
+REVISION_HEAD = "94dec6973c80"
 
 
 def database_url_for(path: Path) -> str:
@@ -46,6 +46,7 @@ def test_expected_columns_exist(migrated_db_path: Path) -> None:
         "home_away",
         "hits",
         "runs",
+        "strikeouts",
         "status",
         "game_number",
         "doubleheader",
@@ -202,3 +203,233 @@ def test_head_revision_identifier() -> None:
 
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     assert script.get_current_head() == REVISION_HEAD
+
+
+PRE_STRIKEOUTS_REVISION = "166b6424e4f9"
+STRIKEOUTS_REVISION = "94dec6973c80"
+
+LEGACY_INSERT = """
+    INSERT INTO team_game_batting_lines (
+        game_pk, game_date, season, team_id, team_name, opponent_id,
+        opponent_name, home_away, hits, runs, status, game_number,
+        doubleheader, scheduled_innings, created_at, updated_at
+    ) VALUES
+        (776704, '2025-08-17', 2025, 136, 'Seattle Mariners', 142,
+         'Minnesota Twins', 'home', 6, 4, 'Final', 1, 0, 9,
+         '2025-08-17 00:00:00', '2025-08-17 00:00:00'),
+        (776705, '2025-08-18', 2025, 136, 'Seattle Mariners', 142,
+         'Minnesota Twins', 'away', 11, 7, 'Final', 1, 0, 9,
+         '2025-08-18 00:00:00', '2025-08-18 00:00:00')
+"""
+
+
+def run_alembic_upgrade_to(database_url: str, revision: str) -> None:
+    """Apply migrations up to one specific revision."""
+    from alembic import command
+
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(cfg, revision)
+
+
+def run_alembic_downgrade_to(database_url: str, revision: str) -> None:
+    """Roll migrations back to one specific revision."""
+    from alembic import command
+
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", database_url)
+    command.downgrade(cfg, revision)
+
+
+@pytest.fixture
+def legacy_db_path(tmp_path: Path) -> Path:
+    """Database at the pre-3.5 revision holding two valid rows without strikeouts."""
+    db_path = tmp_path / "legacy.db"
+    run_alembic_upgrade_to(database_url_for(db_path), PRE_STRIKEOUTS_REVISION)
+    connection = sqlite3.connect(db_path)
+    connection.execute(LEGACY_INSERT)
+    connection.commit()
+    connection.close()
+    return db_path
+
+
+def test_pre_strikeouts_revision_has_no_strikeouts_column(legacy_db_path: Path) -> None:
+    engine = build_engine(database_url_for(legacy_db_path))
+    columns = {
+        col["name"] for col in inspect(engine).get_columns("team_game_batting_lines")
+    }
+    engine.dispose()
+    assert "strikeouts" not in columns
+
+
+def test_upgrade_preserves_existing_rows(legacy_db_path: Path) -> None:
+    run_alembic_upgrade(database_url_for(legacy_db_path))
+    connection = sqlite3.connect(legacy_db_path)
+    rows = connection.execute(
+        "SELECT game_pk, team_name, opponent_name, home_away, hits, runs, "
+        "status, scheduled_innings FROM team_game_batting_lines ORDER BY game_pk"
+    ).fetchall()
+    connection.close()
+    assert rows == [
+        (776704, "Seattle Mariners", "Minnesota Twins", "home", 6, 4, "Final", 9),
+        (776705, "Seattle Mariners", "Minnesota Twins", "away", 11, 7, "Final", 9),
+    ]
+
+
+def test_upgrade_leaves_existing_strikeouts_null(legacy_db_path: Path) -> None:
+    """Unknown history stays unknown; a zero default would invent a statistic."""
+    run_alembic_upgrade(database_url_for(legacy_db_path))
+    connection = sqlite3.connect(legacy_db_path)
+    values = connection.execute(
+        "SELECT strikeouts FROM team_game_batting_lines ORDER BY game_pk"
+    ).fetchall()
+    connection.close()
+    assert values == [(None,), (None,)]
+
+
+def test_upgraded_legacy_rows_still_read_as_domain_records(
+    legacy_db_path: Path,
+) -> None:
+    """The hits page reads these rows through the same repository call."""
+    from app.database.engine import build_session_factory
+    from app.database.repositories import list_team_season
+
+    run_alembic_upgrade(database_url_for(legacy_db_path))
+    engine = build_engine(database_url_for(legacy_db_path))
+    session = build_session_factory(engine)()
+    try:
+        stored = list_team_season(session, team_id=136, season=2025)
+    finally:
+        session.close()
+        engine.dispose()
+
+    assert [(line.game_pk, line.hits, line.strikeouts) for line in stored] == [
+        (776704, 6, None),
+        (776705, 11, None),
+    ]
+
+
+def test_upgrade_keeps_the_query_index(legacy_db_path: Path) -> None:
+    """The table is rebuilt in batch mode, so the index must be re-created."""
+    run_alembic_upgrade(database_url_for(legacy_db_path))
+    connection = sqlite3.connect(legacy_db_path)
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name="
+        "'ix_team_game_batting_lines_team_season_order'"
+    ).fetchall()
+    connection.close()
+    assert rows == [("ix_team_game_batting_lines_team_season_order",)]
+
+
+@pytest.mark.parametrize("column", ["hits", "runs"])
+def test_upgrade_keeps_the_existing_check_constraints(
+    legacy_db_path: Path, column: str
+) -> None:
+    """A batch rebuild driven by reflection alone would have dropped these."""
+    run_alembic_upgrade(database_url_for(legacy_db_path))
+    connection = sqlite3.connect(legacy_db_path)
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            f"""
+            INSERT INTO team_game_batting_lines (
+                game_pk, game_date, season, team_id, team_name, opponent_id,
+                opponent_name, home_away, hits, runs, status, game_number,
+                doubleheader, scheduled_innings, created_at, updated_at
+            ) VALUES (
+                800, '2025-01-01', 2025, 136, 'A', 142, 'B', 'home',
+                {-1 if column == "hits" else 1},
+                {-1 if column == "runs" else 1},
+                'Final', 1, 0, 9, '2025-01-01 00:00:00', '2025-01-01 00:00:00'
+            )
+            """
+        )
+    connection.close()
+
+
+def test_negative_strikeouts_are_rejected(migrated_session: Session) -> None:
+    with pytest.raises(IntegrityError):
+        migrated_session.execute(
+            text(
+                """
+                INSERT INTO team_game_batting_lines (
+                    game_pk, game_date, season, team_id, team_name, opponent_id,
+                    opponent_name, home_away, hits, runs, status, game_number,
+                    doubleheader, scheduled_innings, created_at, updated_at,
+                    strikeouts
+                ) VALUES (
+                    20, '2025-01-01', 2025, 112, 'A', 134, 'B', 'home',
+                    1, 1, 'Final', 1, 0, 9, '2025-01-01 00:00:00',
+                    '2025-01-01 00:00:00', -1
+                )
+                """
+            )
+        )
+        migrated_session.commit()
+
+
+@pytest.mark.parametrize("value", ["NULL", "0", "14"])
+def test_null_and_nonnegative_strikeouts_are_accepted(
+    migrated_session: Session, value: str
+) -> None:
+    migrated_session.execute(
+        text(
+            f"""
+            INSERT INTO team_game_batting_lines (
+                game_pk, game_date, season, team_id, team_name, opponent_id,
+                opponent_name, home_away, hits, runs, status, game_number,
+                doubleheader, scheduled_innings, created_at, updated_at,
+                strikeouts
+            ) VALUES (
+                {21 + len(value)}, '2025-01-01', 2025, 112, 'A', 134, 'B', 'home',
+                1, 1, 'Final', 1, 0, 9, '2025-01-01 00:00:00',
+                '2025-01-01 00:00:00', {value}
+            )
+            """
+        )
+    )
+    migrated_session.commit()
+
+
+def test_downgrade_removes_the_strikeouts_column(legacy_db_path: Path) -> None:
+    url = database_url_for(legacy_db_path)
+    run_alembic_upgrade(url)
+    run_alembic_downgrade_to(url, PRE_STRIKEOUTS_REVISION)
+    engine = build_engine(url)
+    columns = {
+        col["name"] for col in inspect(engine).get_columns("team_game_batting_lines")
+    }
+    engine.dispose()
+    assert "strikeouts" not in columns
+
+
+def test_downgrade_keeps_the_other_columns_and_rows(legacy_db_path: Path) -> None:
+    url = database_url_for(legacy_db_path)
+    run_alembic_upgrade(url)
+    run_alembic_downgrade_to(url, PRE_STRIKEOUTS_REVISION)
+    connection = sqlite3.connect(legacy_db_path)
+    rows = connection.execute(
+        "SELECT game_pk, hits, runs FROM team_game_batting_lines ORDER BY game_pk"
+    ).fetchall()
+    connection.close()
+    assert rows == [(776704, 6, 4), (776705, 11, 7)]
+
+
+def test_upgrade_downgrade_upgrade_round_trips(legacy_db_path: Path) -> None:
+    url = database_url_for(legacy_db_path)
+    run_alembic_upgrade(url)
+    run_alembic_downgrade_to(url, PRE_STRIKEOUTS_REVISION)
+    run_alembic_upgrade(url)
+    connection = sqlite3.connect(legacy_db_path)
+    rows = connection.execute(
+        "SELECT game_pk, strikeouts FROM team_game_batting_lines ORDER BY game_pk"
+    ).fetchall()
+    connection.close()
+    assert rows == [(776704, None), (776705, None)]
+
+
+def test_strikeouts_revision_follows_the_creation_revision() -> None:
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config("alembic.ini"))
+    revision = script.get_revision(STRIKEOUTS_REVISION)
+    assert revision.down_revision == PRE_STRIKEOUTS_REVISION

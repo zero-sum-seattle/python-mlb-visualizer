@@ -242,3 +242,118 @@ def test_empty_input_returns_zero_counts(migrated_session: Session) -> None:
     assert result.inserted == 0
     assert result.updated == 0
     assert result.unchanged == 0
+
+
+def test_strikeouts_round_trip_through_persistence(migrated_session: Session) -> None:
+    line = make_line(strikeouts=11)
+    upsert_team_season(migrated_session, lines=[line])
+    migrated_session.commit()
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert stored == [line]
+    assert stored[0].strikeouts == 11
+
+
+def test_legacy_null_strikeouts_read_back_as_none(migrated_session: Session) -> None:
+    """A row imported before Milestone 3.5 reads as unknown, not as zero."""
+    line = make_line(strikeouts=None)
+    upsert_team_season(migrated_session, lines=[line])
+    migrated_session.commit()
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert stored[0].strikeouts is None
+
+
+def test_zero_strikeouts_is_stored_distinctly_from_unknown(
+    migrated_session: Session,
+) -> None:
+    lines = [
+        make_line(game_pk=1, game_date=date(2025, 4, 1), strikeouts=0),
+        make_line(game_pk=2, game_date=date(2025, 4, 2), strikeouts=None),
+    ]
+    upsert_team_season(migrated_session, lines=lines)
+    migrated_session.commit()
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert [line.strikeouts for line in stored] == [0, None]
+
+
+def test_reimport_backfills_legacy_null_strikeouts(migrated_session: Session) -> None:
+    """The existing import command is the backfill; rows count as updated."""
+    upsert_team_season(migrated_session, lines=[make_line(strikeouts=None)])
+    migrated_session.commit()
+
+    result = upsert_team_season(migrated_session, lines=[make_line(strikeouts=9)])
+    migrated_session.commit()
+
+    assert (result.inserted, result.updated, result.unchanged) == (0, 1, 0)
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert stored[0].strikeouts == 9
+
+
+def test_second_identical_reimport_changes_nothing(migrated_session: Session) -> None:
+    upsert_team_season(migrated_session, lines=[make_line(strikeouts=None)])
+    migrated_session.commit()
+    upsert_team_season(migrated_session, lines=[make_line(strikeouts=9)])
+    migrated_session.commit()
+
+    result = upsert_team_season(migrated_session, lines=[make_line(strikeouts=9)])
+    migrated_session.commit()
+
+    assert (result.inserted, result.updated, result.unchanged) == (0, 0, 1)
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert stored[0].strikeouts == 9
+
+
+def test_a_changed_strikeout_total_alone_counts_as_an_update(
+    migrated_session: Session,
+) -> None:
+    """Strikeouts participate in the stored-vs-incoming comparison."""
+    upsert_team_season(migrated_session, lines=[make_line(strikeouts=9)])
+    migrated_session.commit()
+
+    result = upsert_team_season(migrated_session, lines=[make_line(strikeouts=10)])
+    migrated_session.commit()
+
+    assert (result.inserted, result.updated, result.unchanged) == (0, 1, 0)
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert stored[0].strikeouts == 10
+
+
+def test_strikeouts_are_not_reset_to_none_by_an_unrelated_update(
+    migrated_session: Session,
+) -> None:
+    """Only what the incoming record says is applied, for every field alike."""
+    upsert_team_season(migrated_session, lines=[make_line(strikeouts=9)])
+    migrated_session.commit()
+
+    upsert_team_season(migrated_session, lines=[make_line(strikeouts=9, hits=7)])
+    migrated_session.commit()
+
+    stored = list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON)
+    assert (stored[0].hits, stored[0].strikeouts) == (7, 9)
+
+
+def test_negative_strikeouts_are_refused_by_the_database(
+    migrated_session: Session,
+) -> None:
+    """Pydantic blocks this first; the constraint is the second line of defence."""
+    record = TeamGameBattingLineRecord(
+        game_pk=99,
+        game_date=date(2025, 4, 1),
+        season=SEASON,
+        team_id=CUBS_ID,
+        team_name="Chicago Cubs",
+        opponent_id=134,
+        opponent_name="Pittsburgh Pirates",
+        home_away="home",
+        hits=6,
+        runs=4,
+        strikeouts=-1,
+        status="Final",
+        game_number=1,
+        doubleheader=False,
+        scheduled_innings=9,
+        created_at=datetime(2025, 4, 1),
+        updated_at=datetime(2025, 4, 1),
+    )
+    migrated_session.add(record)
+    with pytest.raises(IntegrityError):
+        migrated_session.commit()
