@@ -31,6 +31,17 @@ class TeamGameBattingLine(BaseModel):
     )
     hits: int = Field(ge=0, description="Hits recorded by the selected team.")
     runs: int = Field(ge=0, description="Runs scored by the selected team.")
+    strikeouts: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Times the selected team's hitters struck out. Batting strikeouts, "
+            "not strikeouts recorded by its pitchers. Optional only so rows "
+            "persisted before batting strikeouts were collected keep an honest "
+            "unknown value; normalization of a fresh MLB response requires a "
+            "real count."
+        ),
+    )
     status: str = Field(min_length=1, description="Detailed MLB game status.")
     game_number: int = Field(
         ge=1,

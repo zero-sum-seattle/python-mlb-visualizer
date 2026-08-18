@@ -26,6 +26,9 @@ def make_batting_line(**overrides: Any) -> TeamGameBattingLine:
         "home_away": "home",
         "hits": 8,
         "runs": 4,
+        # Unset by default, matching a row persisted before Milestone 3.5.
+        # Tests that need real batting strikeouts pass them explicitly.
+        "strikeouts": None,
         "status": "Final",
         "game_number": 1,
         "doubleheader": False,
@@ -42,12 +45,21 @@ def make_season(
     team_name: str = MARINERS_NAME,
     season: int = 2025,
     start_date: date | None = None,
+    strikeouts: Sequence[int | None] | None = None,
 ) -> list[TeamGameBattingLine]:
     """Build one game per hit total, on consecutive days, in season order.
 
     Game ids are derived from the season so one team can hold several seasons
     without colliding on the ``(team_id, game_pk)`` unique key.
+
+    ``strikeouts`` defaults to None for every game, which is what a row
+    persisted before Milestone 3.5 looks like. Pass one value per game to build
+    a team-season that has been imported with batting strikeouts.
     """
+    if strikeouts is not None and len(strikeouts) != len(hits):
+        raise ValueError(
+            f"strikeouts has {len(strikeouts)} values but hits has {len(hits)}"
+        )
     opening_day = start_date or date(season, OPENING_DAY.month, OPENING_DAY.day)
     return [
         make_batting_line(
@@ -58,6 +70,7 @@ def make_season(
             team_name=team_name,
             home_away="home" if index % 2 == 0 else "away",
             hits=value,
+            strikeouts=None if strikeouts is None else strikeouts[index],
         )
         for index, value in enumerate(hits)
     ]

@@ -161,6 +161,7 @@ def test_completed_home_game_is_normalized() -> None:
         home_away="home",
         hits=6,
         runs=4,
+        strikeouts=5,
         status="Final",
         game_number=1,
         doubleheader=False,
@@ -181,6 +182,7 @@ def test_completed_away_game_is_normalized() -> None:
         home_away="away",
         hits=5,
         runs=3,
+        strikeouts=10,
         status="Final",
         game_number=1,
         doubleheader=False,
@@ -660,3 +662,112 @@ def test_supplied_client_is_not_closed() -> None:
     client = make_client()
     collect(client)
     assert client.closed is False
+
+
+REMOVE_FIELD = object()
+
+
+def client_with_strikeouts(game_pk: int, value: Any) -> FakeMlb:
+    """Build a client whose hitting game log has a modified ``strikeOuts``.
+
+    Pass ``REMOVE_FIELD`` to drop the key entirely, or ``None`` to keep the key
+    with a JSON null.
+    """
+    payload = load_payload("cubs_2025_hitting_game_log")
+    for split in payload["stats"][0]["splits"]:
+        if split["game"]["gamePk"] == game_pk:
+            if value is REMOVE_FIELD:
+                split["stat"].pop("strikeOuts", None)
+            else:
+                split["stat"]["strikeOuts"] = value
+    return FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+
+
+def test_batting_strikeouts_are_read_from_the_hitting_game_log() -> None:
+    """``strikeOuts`` in the payload reaches the domain record unchanged."""
+    lines = by_game_pk(collect(make_client()))
+    assert [
+        (pk, lines[pk].strikeouts)
+        for pk in (776704, 777459, 776691, 776676, 776640, 776618)
+    ] == [(776704, 5), (777459, 8), (776691, 9), (776676, 9), (776640, 10), (776618, 6)]
+
+
+def test_batting_strikeouts_belong_to_the_selected_team() -> None:
+    """The 12-1 win at the Angels: hits, runs, and strikeouts must agree."""
+    line = by_game_pk(collect(make_client()))[776618]
+    assert (line.hits, line.runs, line.strikeouts) == (14, 12, 6)
+
+
+def test_strikeouts_are_collected_without_an_extra_mlb_request() -> None:
+    """Strikeouts ride along on the requests Milestone 1 already made."""
+    client = make_client()
+    lines = collect(client)
+    assert all(line.strikeouts is not None for line in lines)
+    assert sorted(client.calls) == ["get_schedule", "get_team", "get_team_stats"]
+
+
+def test_the_hitting_game_log_is_requested_once_for_all_metrics() -> None:
+    client = make_client()
+    collect(client)
+    assert client.calls["get_team_stats"]["stats"] == ["gameLog"]
+    assert client.calls["get_team_stats"]["groups"] == ["hitting"]
+
+
+def test_absent_strikeouts_field_raises_data_error() -> None:
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_with_strikeouts(776704, REMOVE_FIELD))
+    message = str(excinfo.value)
+    assert "strikeOuts" in message
+    assert "776704" in message
+
+
+def test_null_strikeouts_raise_data_error() -> None:
+    """An explicit JSON null is as unusable as an absent field."""
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_with_strikeouts(776704, None))
+    message = str(excinfo.value)
+    assert "strikeOuts" in message
+    assert "776704" in message
+
+
+def test_negative_strikeouts_raise_data_error() -> None:
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_with_strikeouts(776704, -3))
+    message = str(excinfo.value)
+    assert "negative" in message
+    assert "776704" in message
+
+
+def test_missing_strikeouts_are_never_substituted_with_zero() -> None:
+    """The whole import fails rather than inventing a strikeout-free game."""
+    with pytest.raises(TeamGameDataError):
+        collect(client_with_strikeouts(776640, REMOVE_FIELD))
+
+
+def test_zero_strikeouts_is_kept_as_a_real_value() -> None:
+    line = by_game_pk(collect(client_with_strikeouts(776704, 0)))[776704]
+    assert line.strikeouts == 0
+
+
+def test_hits_and_runs_still_normalize_alongside_strikeouts() -> None:
+    """Milestone 1 and 2 behaviour must survive the added field."""
+    line = by_game_pk(collect(make_client()))[776704]
+    assert (line.hits, line.runs, line.strikeouts) == (6, 4, 5)
+
+
+def test_conflicting_duplicate_strikeouts_raise_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    splits = payload["stats"][0]["splits"]
+    conflicting = copy.deepcopy(splits[0])
+    conflicting["stat"]["strikeOuts"] = 12
+    splits.append(conflicting)
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    assert "strikeouts 5 vs 12" in str(excinfo.value)

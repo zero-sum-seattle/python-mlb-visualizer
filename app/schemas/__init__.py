@@ -1,6 +1,13 @@
 """Pydantic schemas for normalized MLB data."""
 
-from app.schemas.analytics import TeamHitsAnalysis, TeamHitsPoint, TeamHitsSummary
+from app.schemas.analytics import (
+    TeamHitsAnalysis,
+    TeamHitsPoint,
+    TeamHitsSummary,
+    TeamStrikeoutsAnalysis,
+    TeamStrikeoutsPoint,
+    TeamStrikeoutsSummary,
+)
 from app.schemas.catalog import AvailableTeamSeason
 from app.schemas.games import TeamGameBattingLine
 
@@ -10,4 +17,7 @@ __all__ = [
     "TeamHitsAnalysis",
     "TeamHitsPoint",
     "TeamHitsSummary",
+    "TeamStrikeoutsAnalysis",
+    "TeamStrikeoutsPoint",
+    "TeamStrikeoutsSummary",
 ]

@@ -1,9 +1,11 @@
 """Retrieve and normalize a team's game-level hitting results.
 
 Hitting numbers come from the team ``gameLog`` hitting stat type, which returns
-one split per played game in a single request. Game context that the stat split
-does not carry (status, opponent name, game number, scheduled innings) comes
-from a single team schedule request and is joined on ``gamePk``.
+one split per played game in a single request. Hits, runs, and batting
+strikeouts all arrive in that same split, so no additional MLB request is made
+for any of them. Game context that the stat split does not carry (status,
+opponent name, game number, scheduled innings) comes from a single team
+schedule request and is joined on ``gamePk``.
 
 The two sources overlap on team, opponent, home/away, date, and runs. That
 overlap is validated for every game rather than assumed, so an upstream or
@@ -319,6 +321,7 @@ def _normalize_batting_line(
             home_away=home_away,
             hits=split.stat.hits,
             runs=split.stat.runs,
+            strikeouts=_require_batting_strikeouts(split, context),
             status=status,
             game_number=scheduled.game_number,
             doubleheader=scheduled.double_header != "N",
@@ -326,6 +329,34 @@ def _normalize_batting_line(
         )
     except ValidationError as exc:
         raise TeamGameDataError(f"Could not normalize {context}: {exc}") from exc
+
+
+def _require_batting_strikeouts(split: HittingGameLog, context: str) -> int:
+    """Return the team's batting strikeouts for a game, or refuse the record.
+
+    ``SimpleHittingSplit.strikeouts`` carries MLB's ``strikeOuts`` field and is
+    optional on the upstream model, so a completed game with no value means the
+    payload changed or is incomplete. That is a data-integrity failure rather
+    than a game in which nobody struck out, so it is raised instead of being
+    read as zero.
+    """
+    strikeouts = split.stat.strikeouts
+    if strikeouts is None:
+        raise TeamGameDataError(
+            f"No batting strikeouts (strikeOuts) in the hitting game log for {context}"
+        )
+    # ``bool`` is an ``int`` subclass, so it is rejected explicitly rather than
+    # being counted as 0 or 1 strikeouts.
+    if isinstance(strikeouts, bool) or not isinstance(strikeouts, int):
+        raise TeamGameDataError(
+            f"Batting strikeouts (strikeOuts) {strikeouts!r} is not an integer "
+            f"for {context}"
+        )
+    if strikeouts < 0:
+        raise TeamGameDataError(
+            f"Batting strikeouts (strikeOuts) {strikeouts} is negative for {context}"
+        )
+    return strikeouts
 
 
 def _resolve_sides(
