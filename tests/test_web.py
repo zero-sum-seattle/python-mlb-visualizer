@@ -439,3 +439,23 @@ def test_request_without_a_lifespan_reports_a_configuration_error() -> None:
     app = create_app()
     with pytest.raises(DatabaseNotConfiguredError):
         TestClient(app).get("/")
+
+
+def test_no_web_route_triggers_league_ingestion(
+    client: TestClient, seed: SeedFn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """League-wide ingestion is an operational task, never a browser request."""
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise AssertionError("A web request must not start a league import")
+
+    monkeypatch.setattr(
+        "app.services.league_season_ingestion.ingest_league_season", fail
+    )
+    monkeypatch.setattr("app.services.league_teams.discover_mlb_teams", fail)
+
+    seed(hits=[7] * 20, strikeouts=[8] * 20)
+    assert client.get("/").status_code == 200
+    assert client.get("/?team_id=136&season=2025&window=15").status_code == 200
+    assert client.get("/strikeouts?team_id=136&season=2025").status_code == 200
+    assert client.get("/health").status_code == 200

@@ -1,4 +1,4 @@
-"""Repository functions for team game batting line persistence."""
+"""Repository functions for game batting line and league ingestion persistence."""
 
 from datetime import UTC, datetime
 
@@ -6,10 +6,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.database.models import TeamGameBattingLineRecord
+from app.database.models import LeagueSeasonIngestionRecord, TeamGameBattingLineRecord
 from app.schemas.catalog import AvailableTeamSeason
 from app.schemas.games import TeamGameBattingLine
-from app.schemas.ingestion import TeamGamePersistenceResult
+from app.schemas.ingestion import (
+    LeagueSeasonIngestionState,
+    LeagueSeasonIngestionStatus,
+    TeamGamePersistenceResult,
+)
 
 MIGRATION_HINT = "poetry run alembic upgrade head"
 
@@ -191,3 +195,99 @@ def upsert_team_season(
     return TeamGamePersistenceResult(
         inserted=inserted, updated=updated, unchanged=unchanged
     )
+
+
+def get_league_season_ingestion(
+    session: Session,
+    *,
+    season: int,
+) -> LeagueSeasonIngestionState | None:
+    """Return the stored coverage state for a season, or None if never run."""
+    record = _load_league_season_ingestion(session, season)
+    return None if record is None else record.to_domain()
+
+
+def record_league_season_ingestion_start(
+    session: Session,
+    *,
+    season: int,
+    expected_team_count: int,
+    started_at: datetime,
+) -> LeagueSeasonIngestionState:
+    """Mark a season's league-wide ingestion as RUNNING and return the state.
+
+    Replaces any state a previous run left behind. A season's coverage is only
+    ever as good as its most recent league-wide ingestion, so a new run
+    invalidates the old answer the moment it starts rather than leaving a stale
+    ``COMPLETE`` in place while teams are being re-fetched.
+
+    Does not commit or roll back.
+    """
+    state = LeagueSeasonIngestionState(
+        season=season,
+        status=LeagueSeasonIngestionStatus.RUNNING,
+        expected_team_count=expected_team_count,
+        successful_team_count=0,
+        failed_team_count=0,
+        started_at=started_at,
+        completed_at=None,
+    )
+    _store_league_season_ingestion(session, state)
+    return state
+
+
+def record_league_season_ingestion_finish(
+    session: Session,
+    *,
+    season: int,
+    expected_team_count: int,
+    successful_team_count: int,
+    failed_team_count: int,
+    started_at: datetime,
+    completed_at: datetime,
+) -> LeagueSeasonIngestionState:
+    """Store the final coverage state of a league-wide ingestion.
+
+    The status is derived here rather than accepted from the caller so a
+    finished run cannot be labelled ``COMPLETE`` while any discovered team
+    failed. Does not commit or roll back.
+    """
+    status = (
+        LeagueSeasonIngestionStatus.COMPLETE
+        if failed_team_count == 0 and expected_team_count > 0
+        else LeagueSeasonIngestionStatus.INCOMPLETE
+    )
+    state = LeagueSeasonIngestionState(
+        season=season,
+        status=status,
+        expected_team_count=expected_team_count,
+        successful_team_count=successful_team_count,
+        failed_team_count=failed_team_count,
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+    _store_league_season_ingestion(session, state)
+    return state
+
+
+def _load_league_season_ingestion(
+    session: Session,
+    season: int,
+) -> LeagueSeasonIngestionRecord | None:
+    return session.scalars(
+        select(LeagueSeasonIngestionRecord).where(
+            LeagueSeasonIngestionRecord.season == season
+        )
+    ).one_or_none()
+
+
+def _store_league_season_ingestion(
+    session: Session,
+    state: LeagueSeasonIngestionState,
+) -> None:
+    """Insert or update the single row that holds a season's coverage state."""
+    record = _load_league_season_ingestion(session, state.season)
+    if record is None:
+        session.add(LeagueSeasonIngestionRecord.from_domain(state))
+        return
+    record.apply_domain(state)

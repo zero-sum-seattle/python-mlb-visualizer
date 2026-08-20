@@ -5,7 +5,10 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
 from app.database.base import Base
-from app.database.models import TeamGameBattingLineRecord  # noqa: F401
+from app.database.models import (  # noqa: F401
+    LeagueSeasonIngestionRecord,
+    TeamGameBattingLineRecord,
+)
 
 config = context.config
 
