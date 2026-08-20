@@ -2,8 +2,12 @@
 
 from datetime import date
 
+import pytest
+
 from app.analytics.team_hitting import build_team_hits_analysis
+from app.analytics.team_strikeouts import build_team_strikeouts_analysis
 from app.web.formatting import (
+    build_strikeout_summary_cards,
     build_summary_cards,
     format_long_date,
     format_matchup,
@@ -69,3 +73,60 @@ def test_hits_per_game_is_the_caption_for_rate_cards() -> None:
     cards = build_summary_cards(analysis)
     assert cards[0].caption == "Hits per Game"
     assert cards[3].caption == "Completed Games"
+
+
+def test_strikeout_cards_describe_batting_strikeouts() -> None:
+    analysis = build_team_strikeouts_analysis(
+        make_season(hits=[8] * 4, strikeouts=[10, 8, 12, 6]), rolling_window=2
+    )
+    cards = build_strikeout_summary_cards(analysis)
+    assert [card.label for card in cards] == [
+        "Recent 2-Game Avg",
+        "Season Avg",
+        "vs Prior 2",
+        "Games Played",
+    ]
+    assert cards[0].caption == "Batting Strikeouts per Game"
+
+
+def test_strikeout_cards_round_for_display_only() -> None:
+    analysis = build_team_strikeouts_analysis(
+        make_season(hits=[8] * 3, strikeouts=[1, 1, 0]), rolling_window=3
+    )
+    cards = build_strikeout_summary_cards(analysis)
+    assert cards[1].value == "0.67"
+    assert analysis.summary.season_average == pytest.approx(2 / 3)
+
+
+def test_strikeout_change_card_is_signed_and_neutral() -> None:
+    """A plain signed number: no wording that calls a direction good or bad."""
+    analysis = build_team_strikeouts_analysis(
+        make_season(hits=[8] * 4, strikeouts=[2, 2, 8, 8]), rolling_window=2
+    )
+    change = build_strikeout_summary_cards(analysis)[2]
+    assert change.value == "+6.00"
+    assert change.caption == "Batting Strikeouts per Game"
+
+
+def test_strikeout_decrease_is_shown_as_a_negative_number() -> None:
+    analysis = build_team_strikeouts_analysis(
+        make_season(hits=[8] * 4, strikeouts=[8, 8, 2, 2]), rolling_window=2
+    )
+    assert build_strikeout_summary_cards(analysis)[2].value == "-6.00"
+
+
+def test_strikeout_change_card_says_when_there_are_too_few_games() -> None:
+    analysis = build_team_strikeouts_analysis(
+        make_season(hits=[8] * 3, strikeouts=[5, 5, 5]), rolling_window=3
+    )
+    change = build_strikeout_summary_cards(analysis)[2]
+    assert change.value == "—"
+    assert change.caption == "Not enough games"
+
+
+def test_strikeout_games_played_counts_completed_games() -> None:
+    analysis = build_team_strikeouts_analysis(
+        make_season(hits=[8] * 5, strikeouts=[5] * 5), rolling_window=2
+    )
+    games = build_strikeout_summary_cards(analysis)[3]
+    assert (games.value, games.caption) == ("5", "Completed Games")

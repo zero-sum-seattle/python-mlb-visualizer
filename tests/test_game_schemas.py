@@ -83,3 +83,27 @@ def test_unknown_fields_are_rejected() -> None:
 def test_json_serialization_uses_iso_dates() -> None:
     line = TeamGameBattingLine(**VALID_LINE)
     assert line.model_dump(mode="json")["game_date"] == "2025-08-17"
+
+
+def test_strikeouts_are_accepted_when_present() -> None:
+    line = TeamGameBattingLine(**{**VALID_LINE, "strikeouts": 9})
+    assert line.strikeouts == 9
+
+
+def test_zero_strikeouts_is_a_real_value() -> None:
+    """A game in which nobody struck out is legitimate, unlike a missing total."""
+    assert TeamGameBattingLine(**{**VALID_LINE, "strikeouts": 0}).strikeouts == 0
+
+
+def test_strikeouts_default_to_none_for_rows_predating_collection() -> None:
+    """Rows persisted before Milestone 3.5 carry an unknown, not a zero."""
+    assert TeamGameBattingLine(**VALID_LINE).strikeouts is None
+
+
+def test_explicit_none_strikeouts_is_accepted() -> None:
+    assert TeamGameBattingLine(**{**VALID_LINE, "strikeouts": None}).strikeouts is None
+
+
+def test_negative_strikeouts_are_rejected() -> None:
+    with pytest.raises(ValidationError):
+        TeamGameBattingLine(**{**VALID_LINE, "strikeouts": -1})

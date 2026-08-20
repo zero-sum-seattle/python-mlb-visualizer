@@ -13,6 +13,10 @@ from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
 from app.analytics.team_hitting import DEFAULT_ROLLING_WINDOW, build_team_hits_analysis
+from app.analytics.team_strikeouts import (
+    MissingStrikeoutDataError,
+    build_team_strikeouts_analysis,
+)
 from app.config import Settings
 from app.database.repositories import (
     MIGRATION_HINT,
@@ -21,13 +25,20 @@ from app.database.repositories import (
     list_team_season,
 )
 from app.web.charts import (
+    STRIKEOUTS_CHART_DIV_ID,
     build_team_hits_figure,
+    build_team_strikeouts_figure,
     plotly_bundle_javascript,
     render_figure_html,
     rolling_average_trace_name,
 )
 from app.web.dependencies import get_db_session
-from app.web.formatting import build_summary_cards, format_long_date
+from app.web.formatting import (
+    build_strikeout_summary_cards,
+    build_summary_cards,
+    format_long_date,
+)
+from app.web.navigation import HITS_PATH, STRIKEOUTS_PATH, build_nav_links
 from app.web.selection import (
     build_team_options,
     build_team_seasons_catalog,
@@ -59,6 +70,14 @@ PLOTLY_BUNDLE_PATH = "/vendor/plotly.min.js"
 IMPORT_COMMAND = (
     "poetry run python scripts/import_team_season.py --team-id 136 --season 2025"
 )
+
+
+def import_command_for(team_id: int, season: int) -> str:
+    """Spell out the import command for the team-season actually selected."""
+    return (
+        f"poetry run python scripts/import_team_season.py "
+        f"--team-id {team_id} --season {season}"
+    )
 
 
 def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
@@ -99,6 +118,13 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             "selected_season": None,
             "import_command": IMPORT_COMMAND,
             "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "form_action": HITS_PATH,
+            "nav_links": build_nav_links(
+                current_path=HITS_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
         }
 
         if not teams:
@@ -132,6 +158,12 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             )
 
         context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=HITS_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
         games = list_team_season(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -150,6 +182,133 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
         )
         return templates.TemplateResponse(
             request=request, name="index.html", context=context
+        )
+
+    @router.get(STRIKEOUTS_PATH, response_class=HTMLResponse)
+    def strikeouts(
+        request: Request,
+        session: Annotated[Session, Depends(get_db_session)],
+        team_id: Annotated[
+            int | None,
+            Query(gt=0, description="MLB team id that has been imported locally."),
+        ] = None,
+        season: Annotated[
+            int | None,
+            Query(gt=0, description="Season that has been imported for the team."),
+        ] = None,
+        window: Annotated[
+            RollingWindowParam,
+            Query(description="Games in the trailing rolling average."),
+        ] = DEFAULT_ROLLING_WINDOW,
+    ) -> Response:
+        """Render batting strikeout trends for one persisted team-season."""
+        try:
+            available = list_available_team_seasons(session)
+        except DatabaseSchemaMissingError as exc:
+            return _render_schema_error(templates, request, settings, exc)
+
+        teams = build_team_options(available)
+        context: dict[str, Any] = {
+            "app_name": settings.app_name,
+            "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
+            "window_options": ROLLING_WINDOW_OPTIONS,
+            "selected_window": window,
+            "selected_team": None,
+            "selected_season": None,
+            "import_command": IMPORT_COMMAND,
+            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "form_action": STRIKEOUTS_PATH,
+            "nav_links": build_nav_links(
+                current_path=STRIKEOUTS_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
+        }
+
+        if not teams:
+            context["state"] = "empty"
+            return templates.TemplateResponse(
+                request=request, name="strikeouts.html", context=context
+            )
+
+        selected_team = select_team(teams, team_id)
+        if selected_team is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No games are stored for team id {team_id}. "
+                "Pick a team that has been imported, or import that team."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="strikeouts.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_team"] = selected_team
+        selected_season = select_season(selected_team, season)
+        if selected_season is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No {season} games are stored for {selected_team.team_name}. "
+                f"Stored seasons: "
+                f"{', '.join(str(value) for value in selected_team.seasons)}."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="strikeouts.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=STRIKEOUTS_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
+        games = list_team_season(
+            session, team_id=selected_team.team_id, season=selected_season
+        )
+
+        try:
+            analysis = build_team_strikeouts_analysis(games, rolling_window=window)
+        except MissingStrikeoutDataError as exc:
+            # Stored before batting strikeouts were persisted. Charting these
+            # games would mean inventing totals or quietly analysing a subset,
+            # so the page asks for a re-import instead.
+            context["state"] = "missing_strikeouts"
+            context["missing_message"] = str(exc)
+            context["games_missing"] = exc.games_missing
+            context["games_total"] = exc.games_total
+            context["reimport_command"] = import_command_for(
+                selected_team.team_id, selected_season
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="strikeouts.html",
+                context=context,
+                status_code=409,
+            )
+
+        figure = build_team_strikeouts_figure(analysis)
+        context.update(
+            {
+                "state": "ok",
+                "analysis": analysis,
+                "chart_html": render_figure_html(
+                    figure, div_id=STRIKEOUTS_CHART_DIV_ID
+                ),
+                "rolling_average_label": rolling_average_trace_name(window),
+                "summary_cards": build_strikeout_summary_cards(analysis),
+                "data_through": format_long_date(analysis.last_game_date),
+            }
+        )
+        return templates.TemplateResponse(
+            request=request, name="strikeouts.html", context=context
         )
 
     @router.get(PLOTLY_BUNDLE_PATH, include_in_schema=False)

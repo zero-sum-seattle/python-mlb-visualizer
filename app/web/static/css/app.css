@@ -72,6 +72,36 @@ body {
   color: #9fd8d9;
 }
 
+/* Navigation */
+
+.site-nav {
+  background: var(--navy-deep);
+}
+
+.site-nav__inner {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.site-nav__link {
+  display: inline-block;
+  padding: 0.65rem 0.9rem;
+  color: #c8d6e5;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+}
+
+.site-nav__link:hover {
+  color: #ffffff;
+}
+
+.site-nav__link--current {
+  color: #ffffff;
+  border-bottom-color: var(--teal);
+}
+
 /* Page */
 
 .page {

@@ -5,7 +5,14 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.analytics import TeamHitsAnalysis, TeamHitsPoint, TeamHitsSummary
+from app.schemas.analytics import (
+    TeamHitsAnalysis,
+    TeamHitsPoint,
+    TeamHitsSummary,
+    TeamStrikeoutsAnalysis,
+    TeamStrikeoutsPoint,
+    TeamStrikeoutsSummary,
+)
 
 
 def make_point(**overrides: object) -> TeamHitsPoint:
@@ -136,3 +143,109 @@ def test_analysis_holds_no_season_average_of_its_own() -> None:
     assert "season_average" not in TeamHitsAnalysis.model_fields
     with pytest.raises(ValidationError):
         make_analysis(season_average=8.0)
+
+
+def make_strikeout_point(**overrides: object) -> TeamStrikeoutsPoint:
+    base: dict[str, object] = {
+        "game_pk": 776000,
+        "game_number": 1,
+        "season_game_number": 1,
+        "game_date": date(2025, 3, 27),
+        "opponent_name": "Minnesota Twins",
+        "home_away": "home",
+        "strikeouts": 9,
+        "rolling_average": 9.0,
+    }
+    base.update(overrides)
+    return TeamStrikeoutsPoint(**base)
+
+
+def make_strikeout_summary(**overrides: object) -> TeamStrikeoutsSummary:
+    base: dict[str, object] = {
+        "games_played": 1,
+        "season_average": 9.0,
+        "recent_average": 9.0,
+    }
+    base.update(overrides)
+    return TeamStrikeoutsSummary(**base)
+
+
+def make_strikeout_analysis(**overrides: object) -> TeamStrikeoutsAnalysis:
+    base: dict[str, object] = {
+        "team_id": 136,
+        "team_name": "Seattle Mariners",
+        "season": 2025,
+        "rolling_window": 15,
+        "points": (make_strikeout_point(),),
+        "summary": make_strikeout_summary(),
+    }
+    base.update(overrides)
+    return TeamStrikeoutsAnalysis(**base)
+
+
+def test_valid_strikeout_analysis_is_accepted() -> None:
+    assert make_strikeout_analysis().summary.season_average == 9.0
+
+
+def test_strikeout_point_requires_a_known_total() -> None:
+    """Unknown totals are refused by analytics, so a point cannot carry None."""
+    with pytest.raises(ValidationError):
+        make_strikeout_point(strikeouts=None)
+
+
+def test_negative_strikeouts_are_rejected_on_a_point() -> None:
+    with pytest.raises(ValidationError):
+        make_strikeout_point(strikeouts=-1)
+
+
+def test_zero_strikeouts_is_valid_on_a_point() -> None:
+    assert make_strikeout_point(strikeouts=0).strikeouts == 0
+
+
+def test_strikeout_prior_window_fields_must_agree() -> None:
+    with pytest.raises(ValidationError):
+        make_strikeout_summary(prior_window_average=7.0)
+    with pytest.raises(ValidationError):
+        make_strikeout_summary(change_vs_prior_window=2.0)
+
+
+def test_strikeout_prior_window_fields_may_both_be_present() -> None:
+    summary = make_strikeout_summary(
+        prior_window_average=7.0, change_vs_prior_window=2.0
+    )
+    assert summary.change_vs_prior_window == 2.0
+
+
+def test_strikeout_change_may_be_negative() -> None:
+    summary = make_strikeout_summary(
+        prior_window_average=11.0, change_vs_prior_window=-2.0
+    )
+    assert summary.change_vs_prior_window == -2.0
+
+
+def test_strikeout_summary_must_match_the_number_of_points() -> None:
+    with pytest.raises(ValidationError):
+        make_strikeout_analysis(summary=make_strikeout_summary(games_played=2))
+
+
+def test_strikeout_analysis_requires_at_least_one_point() -> None:
+    with pytest.raises(ValidationError):
+        make_strikeout_analysis(points=())
+
+
+def test_strikeout_analysis_last_game_date_is_the_final_point() -> None:
+    analysis = make_strikeout_analysis(
+        points=(
+            make_strikeout_point(),
+            make_strikeout_point(
+                game_pk=776001, season_game_number=2, game_date=date(2025, 3, 28)
+            ),
+        ),
+        summary=make_strikeout_summary(games_played=2),
+    )
+    assert analysis.last_game_date == date(2025, 3, 28)
+
+
+def test_strikeout_analysis_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        make_strikeout_analysis(strikeout_rate=0.22)

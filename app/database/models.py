@@ -36,6 +36,10 @@ class TeamGameBattingLineRecord(Base):
         CheckConstraint("opponent_id > 0", name="opponent_id_positive"),
         CheckConstraint("hits >= 0", name="hits_nonnegative"),
         CheckConstraint("runs >= 0", name="runs_nonnegative"),
+        CheckConstraint(
+            "strikeouts IS NULL OR strikeouts >= 0",
+            name="strikeouts_nonnegative_or_unknown",
+        ),
         CheckConstraint("game_number >= 1", name="game_number_min"),
         CheckConstraint("scheduled_innings >= 1", name="scheduled_innings_min"),
         CheckConstraint(
@@ -63,6 +67,10 @@ class TeamGameBattingLineRecord(Base):
     home_away: Mapped[str] = mapped_column(String, nullable=False)
     hits: Mapped[int] = mapped_column(Integer, nullable=False)
     runs: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Nullable on purpose: rows persisted before batting strikeouts were
+    # collected have an unknown total, which is not the same as zero. A
+    # re-import replaces the NULL with the real MLB value.
+    strikeouts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     game_number: Mapped[int] = mapped_column(Integer, nullable=False)
     doubleheader: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -87,6 +95,7 @@ class TeamGameBattingLineRecord(Base):
             home_away=self.home_away,
             hits=self.hits,
             runs=self.runs,
+            strikeouts=self.strikeouts,
             status=self.status,
             game_number=self.game_number,
             doubleheader=self.doubleheader,
@@ -103,6 +112,7 @@ class TeamGameBattingLineRecord(Base):
         self.home_away = line.home_away
         self.hits = line.hits
         self.runs = line.runs
+        self.strikeouts = line.strikeouts
         self.status = line.status
         self.game_number = line.game_number
         self.doubleheader = line.doubleheader
@@ -127,6 +137,7 @@ class TeamGameBattingLineRecord(Base):
             home_away=line.home_away,
             hits=line.hits,
             runs=line.runs,
+            strikeouts=line.strikeouts,
             status=line.status,
             game_number=line.game_number,
             doubleheader=line.doubleheader,

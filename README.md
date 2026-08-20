@@ -13,6 +13,8 @@ Interactive MLB statistics visualization web application powered by
 
 **Milestone 3 — Team hits web visualization** is complete.
 
+**Milestone 3.5 — Team batting strikeouts over time** is complete.
+
 Milestone 0 provides a FastAPI application with Jinja2 templates, Pydantic
 Settings configuration, pytest coverage, Ruff linting/formatting, and GitHub
 Actions CI.
@@ -26,6 +28,11 @@ team-season ingestion service, and an import CLI.
 Milestone 3 adds the first visualization page: a team's hits per game with a
 trailing rolling average, drawn with Plotly from data already in SQLite. See
 [docs/team-hits-visualization.md](docs/team-hits-visualization.md).
+
+Milestone 3.5 adds a second metric page on the same foundation: a team's
+batting strikeouts per game. Batting strikeouts were already present in the
+hitting game log Milestone 1 retrieves, so no new MLB request was added. See
+[docs/team-strikeouts-visualization.md](docs/team-strikeouts-visualization.md).
 
 ## Planned MVP
 
@@ -111,7 +118,8 @@ poetry run uvicorn app.main:app --reload
 
 Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-- `/` — team hitting trends
+- `/` — team hitting trends (hits per game)
+- `/strikeouts` — team batting strikeout trends
 - `/health` — JSON health check
 
 ## Team hitting trends page
@@ -157,6 +165,53 @@ league-wide ingestion is defined.
 If the database is empty, the page explains how to import a team-season. If
 migrations have not been applied, it asks for `poetry run alembic upgrade head`
 instead of failing with a traceback.
+
+## Team batting strikeout trends page
+
+`/strikeouts` charts one team's **batting** strikeouts per game for one season,
+with a trailing rolling average and the team's season average.
+
+```text
+http://127.0.0.1:8000/strikeouts?team_id=136&season=2025&window=15
+```
+
+It takes the same `team_id`, `season`, and `window` parameters as the hits page,
+with the same defaults, and the navigation carries the current selection between
+the two pages. `/` is unchanged and still serves hits.
+
+**Batting, not pitching.** Every label says "Batting Strikeouts": these are
+times the team's own hitters struck out, not strikeouts recorded by its
+pitchers.
+
+**Direction is not labelled good or bad.** A positive "vs Prior {window}" value
+means more batting strikeouts. Whether that is bad depends on the question and
+on what else the offense is doing, so no positive/negative colouring is applied.
+
+**K/Game is a count, not a rate.** Games contain different numbers of plate
+appearances, so a game with more opportunities can show more strikeouts without
+hitters striking out any more often. K% (strikeouts per plate appearance) is the
+opportunity-adjusted measure and is deferred until plate appearances are
+persisted; it is not estimated in the meantime.
+
+### Re-importing for batting strikeouts
+
+Batting strikeouts were added in Milestone 3.5, so team-seasons imported before
+it have no stored strikeout totals. Those totals are **unknown, not zero**, so
+the migration leaves them `NULL` rather than defaulting them.
+
+If a selected team-season still has unimported strikeouts, `/strikeouts`
+explains that and shows the command for that exact team and season instead of
+charting anything:
+
+```bash
+poetry run python scripts/import_team_season.py --team-id 136 --season 2025
+```
+
+The same import command as always — there is no separate strikeout import. The
+first re-import counts those rows as **updated**; running it again against
+unchanged MLB data counts them as **unchanged**.
+
+The hits page keeps working normally throughout, before and after the backfill.
 
 ## Team game-level hitting data
 
