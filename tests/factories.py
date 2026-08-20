@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from typing import Any
 
+from app.schemas.analytics import LeagueHitsContext
 from app.schemas.games import TeamGameBattingLine
 
 MARINERS_ID = 136
@@ -74,3 +75,25 @@ def make_season(
         )
         for index, value in enumerate(hits)
     ]
+
+
+def make_league_hits_context(
+    *,
+    season: int = 2025,
+    total_hits: int = 80,
+    team_game_records: int = 10,
+    teams_represented: int = 2,
+) -> LeagueHitsContext:
+    """Build MLB-wide context directly, for tests about presentation.
+
+    Tests of the formula itself build the context from batting lines through
+    ``build_league_hits_context``. Tests about cards, traces, and wording only
+    need a context holding a chosen average, so they build one here.
+    """
+    return LeagueHitsContext(
+        season=season,
+        teams_represented=teams_represented,
+        team_game_records=team_game_records,
+        total_hits=total_hits,
+        hits_per_game=total_hits / team_game_records,
+    )

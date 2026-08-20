@@ -13,6 +13,7 @@ cases.
 from __future__ import annotations
 
 from datetime import date
+from math import isclose
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -215,3 +216,93 @@ class TeamStrikeoutsAnalysis(BaseModel):
     def last_game_date(self) -> date:
         """Date of the most recent completed game in the analysis."""
         return self.points[-1].game_date
+
+
+class LeagueHitsContext(BaseModel):
+    """MLB-wide hitting context for one season.
+
+    Built from every persisted team-game batting line for the season, so
+    ``hits_per_game`` is a game-weighted mean across team-game records rather
+    than the unweighted mean of each club's own average. Teams do not all play
+    the same number of games, so those two numbers are not the same statistic.
+
+    Every field describes the games **currently stored** for the season. For a
+    season still being played that is the completed games held by the most
+    recent complete league-wide refresh, not a whole season.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    season: int = Field(gt=0, description="Season the context describes.")
+    teams_represented: int = Field(
+        ge=1,
+        description="Distinct teams with at least one stored game in the season.",
+    )
+    team_game_records: int = Field(
+        ge=1,
+        description="Team-game batting lines counted. One MLB game contributes "
+        "two records once both clubs are stored, so this is not a game count.",
+    )
+    total_hits: int = Field(
+        ge=0, description="Hits summed across every counted team-game record."
+    )
+    hits_per_game: float = Field(
+        ge=0,
+        description="total_hits / team_game_records.",
+    )
+
+    @model_validator(mode="after")
+    def _hits_per_game_matches_the_totals(self) -> LeagueHitsContext:
+        expected = self.total_hits / self.team_game_records
+        if not isclose(self.hits_per_game, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"hits_per_game ({self.hits_per_game}) must equal total_hits / "
+                f"team_game_records ({expected})"
+            )
+        if self.teams_represented > self.team_game_records:
+            raise ValueError(
+                f"teams_represented ({self.teams_represented}) cannot exceed "
+                f"team_game_records ({self.team_game_records})"
+            )
+        return self
+
+
+class TeamHitsLeagueComparison(BaseModel):
+    """One team's hits per game placed beside MLB overall for the same season.
+
+    Purely descriptive. A difference here says the selected team averaged more
+    or fewer hits per game than MLB across the stored season; it carries no
+    claim of significance, of skill, or of anything predictive.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id of the selected team.")
+    team_name: str = Field(min_length=1, description="Name for the season.")
+    season: int = Field(gt=0, description="Season compared.")
+    team_hits_per_game: float = Field(
+        ge=0,
+        description="The selected team's average across its stored games, taken "
+        "from TeamHitsSummary.season_average so the page cannot disagree with "
+        "itself.",
+    )
+    league: LeagueHitsContext = Field(description="MLB-wide context compared against.")
+    difference_vs_mlb: float = Field(
+        description="team_hits_per_game - league.hits_per_game. Positive means "
+        "the team averaged more hits per game than MLB overall.",
+    )
+
+    @model_validator(mode="after")
+    def _comparison_is_internally_consistent(self) -> TeamHitsLeagueComparison:
+        if self.season != self.league.season:
+            raise ValueError(
+                f"season ({self.season}) must match the league context season "
+                f"({self.league.season})"
+            )
+        expected = self.team_hits_per_game - self.league.hits_per_game
+        if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"difference_vs_mlb ({self.difference_vs_mlb}) must equal "
+                f"team_hits_per_game - league.hits_per_game ({expected})"
+            )
+        return self

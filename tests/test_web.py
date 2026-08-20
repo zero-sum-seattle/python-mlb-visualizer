@@ -231,11 +231,12 @@ def test_page_contains_all_three_chart_series(client: TestClient, seed: SeedFn) 
 
 
 def test_page_contains_the_summary_cards(client: TestClient, seed: SeedFn) -> None:
+    """Milestone 5 replaced the prior-window card with the MLB comparison."""
     seed(hits=[6, 8, 10, 12] * 10)
     body = client.get("/").text
     assert "Recent 15-Game Avg" in body
     assert "Season Avg" in body
-    assert "vs Prior 15" in body
+    assert "vs MLB" in body
     assert "Games Played" in body
     assert "40" in body
 

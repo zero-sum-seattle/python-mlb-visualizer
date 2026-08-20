@@ -42,6 +42,13 @@ discovered club, and a persisted record of whether a run actually covered them
 all. It adds no visualization. See
 [docs/league-season-ingestion.md](docs/league-season-ingestion.md).
 
+Milestone 5 adds MLB-wide context to the team hits page: an MLB hits-per-game
+reference line, a `vs MLB` summary card, and a difference between the two. The
+MLB average is a game-weighted mean over stored team-game records, and it is
+shown only when Milestone 4 recorded `COMPLETE` league coverage for the
+selected season. See
+[docs/team-vs-mlb-comparison.md](docs/team-vs-mlb-comparison.md).
+
 ## Planned MVP
 
 A local web application that:
@@ -443,12 +450,14 @@ poetry run ruff format --check .
 │   ├── league-season-ingestion.md
 │   ├── team-game-data-spike.md
 │   ├── team-hits-visualization.md
-│   └── team-season-ingestion.md
+│   ├── team-season-ingestion.md
+│   └── team-vs-mlb-comparison.md
 ├── tests/
 │   ├── conftest.py
 │   ├── factories.py
 │   ├── fixtures/
 │   │   └── team_game_logs/
+│   ├── test_analytics_league_hitting.py
 │   ├── test_analytics_schemas.py
 │   ├── test_analytics_team_hitting.py
 │   ├── test_charts.py
@@ -463,10 +472,12 @@ poetry run ruff format --check .
 │   ├── test_repositories.py
 │   ├── test_repositories_catalog.py
 │   ├── test_repositories_league.py
+│   ├── test_repositories_league_season.py
 │   ├── test_selection.py
 │   ├── test_team_game_logs.py
 │   ├── test_team_season_ingestion.py
-│   └── test_web.py
+│   ├── test_web.py
+│   └── test_web_league_comparison.py
 ├── .github/
 │   └── workflows/
 │       └── test.yml
@@ -479,11 +490,14 @@ poetry run ruff format --check .
 
 ## Later milestones
 
-League-wide ingestion landed in Milestone 4, so the league comparison it was a
-prerequisite for is now unblocked. MLB average lines, league ranks, percentiles,
-and team-vs-league comparisons belong to Milestone 5, and should check a
-season's stored ingestion coverage before presenting any league statistic. See
-[docs/league-season-ingestion.md](docs/league-season-ingestion.md).
+Milestone 5 delivered the MLB hits-per-game comparison the Milestone 4 coverage
+state unblocked, gated on that state exactly as planned. See
+[docs/team-vs-mlb-comparison.md](docs/team-vs-mlb-comparison.md).
+
+Still unimplemented, and each needing its own definition before it is drawn:
+league rank, percentiles, normalized indexes, and a league comparison for
+batting strikeouts. Any of them must check a season's stored ingestion coverage
+before presenting a league statistic, the way the hits comparison does.
 
 ## Disclaimer
 

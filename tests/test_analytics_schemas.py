@@ -6,7 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.analytics import (
+    LeagueHitsContext,
     TeamHitsAnalysis,
+    TeamHitsLeagueComparison,
     TeamHitsPoint,
     TeamHitsSummary,
     TeamStrikeoutsAnalysis,
@@ -249,3 +251,87 @@ def test_strikeout_analysis_last_game_date_is_the_final_point() -> None:
 def test_strikeout_analysis_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         make_strikeout_analysis(strikeout_rate=0.22)
+
+
+# ---------------------------------------------- league context and comparison
+
+
+def league_context(**overrides: object) -> LeagueHitsContext:
+    base: dict[str, object] = {
+        "season": 2025,
+        "teams_represented": 30,
+        "team_game_records": 4860,
+        "total_hits": 39852,
+        "hits_per_game": 39852 / 4860,
+    }
+    base.update(overrides)
+    return LeagueHitsContext(**base)
+
+
+def test_league_context_accepts_consistent_totals() -> None:
+    context = league_context()
+    assert context.hits_per_game == pytest.approx(39852 / 4860)
+
+
+def test_league_context_rejects_an_average_that_disagrees_with_its_totals() -> None:
+    """The context cannot be built holding a number nothing in it produced."""
+    with pytest.raises(ValidationError, match="hits_per_game"):
+        league_context(hits_per_game=8.0)
+
+
+def test_league_context_rejects_more_teams_than_records() -> None:
+    with pytest.raises(ValidationError, match="teams_represented"):
+        league_context(
+            teams_represented=30, team_game_records=10, total_hits=80, hits_per_game=8.0
+        )
+
+
+def test_league_context_requires_at_least_one_record() -> None:
+    with pytest.raises(ValidationError):
+        league_context(
+            team_game_records=0, teams_represented=0, total_hits=0, hits_per_game=0.0
+        )
+
+
+def test_league_context_is_immutable_and_closed() -> None:
+    context = league_context()
+    with pytest.raises(ValidationError):
+        context.hits_per_game = 9.0
+    with pytest.raises(ValidationError):
+        league_context(games_played=10)
+
+
+def test_comparison_rejects_a_difference_that_does_not_subtract() -> None:
+    with pytest.raises(ValidationError, match="difference_vs_mlb"):
+        TeamHitsLeagueComparison(
+            team_id=136,
+            team_name="Seattle Mariners",
+            season=2025,
+            team_hits_per_game=8.7,
+            league=league_context(),
+            difference_vs_mlb=99.0,
+        )
+
+
+def test_comparison_rejects_a_league_context_from_another_season() -> None:
+    with pytest.raises(ValidationError, match="season"):
+        TeamHitsLeagueComparison(
+            team_id=136,
+            team_name="Seattle Mariners",
+            season=2026,
+            team_hits_per_game=8.7,
+            league=league_context(season=2025),
+            difference_vs_mlb=8.7 - 39852 / 4860,
+        )
+
+
+def test_comparison_allows_a_negative_difference() -> None:
+    comparison = TeamHitsLeagueComparison(
+        team_id=136,
+        team_name="Seattle Mariners",
+        season=2025,
+        team_hits_per_game=7.0,
+        league=league_context(),
+        difference_vs_mlb=7.0 - 39852 / 4860,
+    )
+    assert comparison.difference_vs_mlb < 0

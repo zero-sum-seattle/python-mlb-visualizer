@@ -12,6 +12,11 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
+from app.analytics.league_hitting import (
+    build_league_hits_context,
+    compare_team_hits_to_league,
+    supports_league_wide_average,
+)
 from app.analytics.team_hitting import DEFAULT_ROLLING_WINDOW, build_team_hits_analysis
 from app.analytics.team_strikeouts import (
     MissingStrikeoutDataError,
@@ -21,9 +26,12 @@ from app.config import Settings
 from app.database.repositories import (
     MIGRATION_HINT,
     DatabaseSchemaMissingError,
+    get_league_season_ingestion,
     list_available_team_seasons,
+    list_league_season,
     list_team_season,
 )
+from app.schemas.analytics import TeamHitsAnalysis, TeamHitsLeagueComparison
 from app.web.charts import (
     STRIKEOUTS_CHART_DIV_ID,
     build_team_hits_figure,
@@ -36,6 +44,7 @@ from app.web.dependencies import get_db_session
 from app.web.formatting import (
     build_strikeout_summary_cards,
     build_summary_cards,
+    format_league_comparison_note,
     format_long_date,
 )
 from app.web.navigation import HITS_PATH, STRIKEOUTS_PATH, build_nav_links
@@ -168,7 +177,8 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             session, team_id=selected_team.team_id, season=selected_season
         )
         analysis = build_team_hits_analysis(games, rolling_window=window)
-        figure = build_team_hits_figure(analysis)
+        league_comparison = _load_league_comparison(session, analysis)
+        figure = build_team_hits_figure(analysis, league_comparison)
 
         context.update(
             {
@@ -176,7 +186,11 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
                 "analysis": analysis,
                 "chart_html": render_figure_html(figure),
                 "rolling_average_label": rolling_average_trace_name(window),
-                "summary_cards": build_summary_cards(analysis),
+                "summary_cards": build_summary_cards(analysis, league_comparison),
+                "league_comparison": league_comparison,
+                "league_comparison_note": format_league_comparison_note(
+                    league_comparison
+                ),
                 "data_through": format_long_date(analysis.last_game_date),
             }
         )
@@ -333,6 +347,29 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
         }
 
     return router
+
+
+def _load_league_comparison(
+    session: Session,
+    analysis: TeamHitsAnalysis,
+) -> TeamHitsLeagueComparison | None:
+    """Read MLB context for the analysed season, or None when it is not earned.
+
+    The completeness rule lives in ``app.analytics.league_hitting`` and the
+    formula lives there too; this only wires the persisted coverage state and
+    the persisted season to them. A season without complete coverage simply
+    yields None, and the team's own page renders exactly as it did before.
+
+    The season query cannot come back empty here: the analysis was built from
+    games stored for this season, so those rows are part of what it returns.
+    """
+    coverage = get_league_season_ingestion(session, season=analysis.season)
+    if not supports_league_wide_average(coverage):
+        return None
+
+    league_games = list_league_season(session, season=analysis.season)
+    league = build_league_hits_context(league_games)
+    return compare_team_hits_to_league(analysis, league)
 
 
 def _render_schema_error(
