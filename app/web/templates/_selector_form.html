@@ -4,35 +4,39 @@
 <script type="application/json" id="team-seasons-data">{{ team_seasons_catalog | tojson }}</script>
 
 <form class="controls card" method="get" action="{{ form_action }}">
-  <div class="control">
-    <label for="team_id">Team</label>
-    <select id="team_id" name="team_id">
-      {%- for team in teams %}
-        {%- set is_selected = selected_team and team.team_id == selected_team.team_id %}
-        <option value="{{ team.team_id }}"{% if is_selected %} selected{% endif %}>{{ team.team_name }}</option>
-      {%- endfor %}
-    </select>
+  <div class="controls__fields">
+    <div class="control">
+      <label for="team_id">Team</label>
+      <select id="team_id" name="team_id">
+        {%- for team in teams %}
+          {%- set is_selected = selected_team and team.team_id == selected_team.team_id %}
+          <option value="{{ team.team_id }}"{% if is_selected %} selected{% endif %}>{{ team.team_name }}</option>
+        {%- endfor %}
+      </select>
+    </div>
+
+    <div class="control">
+      <label for="season">Season</label>
+      <select id="season" name="season">
+        {%- for season_option in (selected_team.seasons if selected_team else []) %}
+          <option value="{{ season_option }}"{% if season_option == selected_season %} selected{% endif %}>{{ season_option }}</option>
+        {%- endfor %}
+      </select>
+    </div>
+
+    <div class="control">
+      <label for="window">Rolling Window</label>
+      <select id="window" name="window">
+        {%- for window_option in window_options %}
+          <option value="{{ window_option }}"{% if window_option == selected_window %} selected{% endif %}>{{ window_option }} Games</option>
+        {%- endfor %}
+      </select>
+    </div>
   </div>
 
-  <div class="control">
-    <label for="season">Season</label>
-    <select id="season" name="season">
-      {%- for season_option in (selected_team.seasons if selected_team else []) %}
-        <option value="{{ season_option }}"{% if season_option == selected_season %} selected{% endif %}>{{ season_option }}</option>
-      {%- endfor %}
-    </select>
-  </div>
-
-  <div class="control">
-    <label for="window">Rolling Window</label>
-    <select id="window" name="window">
-      {%- for window_option in window_options %}
-        <option value="{{ window_option }}"{% if window_option == selected_window %} selected{% endif %}>{{ window_option }} Games</option>
-      {%- endfor %}
-    </select>
-  </div>
-
-  <div class="control control--action">
+  {# The reference layout puts an action in this slot. This one is the real
+     control the form needs: without JavaScript the selection is applied here. #}
+  <div class="controls__action">
     <button type="submit">Update chart</button>
   </div>
 </form>

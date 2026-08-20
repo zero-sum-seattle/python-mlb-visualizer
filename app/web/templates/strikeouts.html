@@ -80,37 +80,46 @@
         {% endfor %}
       </section>
 
-      <section class="card about">
-        <h2>About this chart</h2>
-        <p>
-          Each point is the number of times {{ analysis.team_name }}'s hitters
-          struck out in one completed game. These are batting strikeouts, not
-          strikeouts recorded by the team's pitchers. The
-          {{ rolling_average_label|lower }} covers that game and the
-          {{ analysis.rolling_window - 1 }} games before it, and early-season
-          points use every game played so far. The dashed line is the team's
-          average across the completed games currently stored for this season.
-        </p>
-        <p>
-          A higher or lower value describes how many times hitters struck out in
-          each stored completed game. It is not labelled good or bad here:
-          whether more batting strikeouts matter depends on the question being
-          asked and on what else the offense is doing.
-        </p>
-        <h3>What K/Game does not tell you</h3>
-        <p>
-          Strikeouts per game is a count, not a rate. Games contain different
-          numbers of plate appearances: extra innings, long innings, and games
-          shortened by weather all change how many chances hitters got. A game
-          with more opportunities can show more strikeouts without the hitters
-          striking out any more often.
-        </p>
-        <p>
-          Strikeout rate (K%), which divides strikeouts by plate appearances,
-          answers the opportunity-adjusted version of this question and would be
-          the better measure for it. It is deferred until plate appearances are
-          persisted; this page does not estimate it.
-        </p>
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            Each point is the number of times {{ analysis.team_name }}'s hitters
+            struck out in one completed game. These are batting strikeouts, not
+            strikeouts recorded by the team's pitchers. The
+            {{ rolling_average_label|lower }} covers that game and the
+            {{ analysis.rolling_window - 1 }} games before it, and early-season
+            points use every game played so far. The dashed line is the team's
+            average across the completed games currently stored for this season.
+          </p>
+          <p>
+            A higher or lower value describes how many times hitters struck out in
+            each stored completed game. It is not labelled good or bad here:
+            whether more batting strikeouts matter depends on the question being
+            asked and on what else the offense is doing.
+          </p>
+          <h3>What K/Game does not tell you</h3>
+          <p>
+            Strikeouts per game is a count, not a rate. Games contain different
+            numbers of plate appearances: extra innings, long innings, and games
+            shortened by weather all change how many chances hitters got. A game
+            with more opportunities can show more strikeouts without the hitters
+            striking out any more often.
+          </p>
+          <p>
+            Strikeout rate (K%), which divides strikeouts by plate appearances,
+            answers the opportunity-adjusted version of this question and would be
+            the better measure for it. It is deferred until plate appearances are
+            persisted; this page does not estimate it.
+          </p>
+        </div>
       </section>
     {% endif %}
   {% endif %}
@@ -118,7 +127,7 @@
 
 {% block footer %}
   {% if state == "ok" %}
-    <p>Data through {{ data_through }}.</p>
+    <span>Data through {{ data_through }}</span>
   {% endif %}
-  <p>Source: MLB Stats API via python-mlb-statsapi.</p>
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
 {% endblock %}

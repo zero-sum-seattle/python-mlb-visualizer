@@ -61,29 +61,38 @@
         {% endfor %}
       </section>
 
-      <section class="card about">
-        <h2>About this chart</h2>
-        <p>
-          The rolling average smooths out unusually high or low individual games
-          so the team's broader offensive trend is easier to see. Each point is
-          one completed game; the {{ rolling_average_label|lower }} covers that
-          game and the {{ analysis.rolling_window - 1 }} games before it, and
-          early-season points use every game played so far. The dashed line is
-          the team's average across the completed games currently stored for
-          this season.
-        </p>
-        <p>
-          {% if league_comparison %}
-            The dotted line is MLB overall.
-          {% endif %}
-          {{ league_comparison_note }}
-          {% if league_comparison %}
-            A positive <strong>vs MLB</strong> value means
-            {{ analysis.team_name }} averaged more hits per game than MLB across
-            the stored season, and a negative value fewer. It is descriptive
-            context, not a measure of significance.
-          {% endif %}
-        </p>
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            The rolling average smooths out unusually high or low individual
+            games so the team's broader offensive trend is easier to see. Each
+            point is one completed game; the {{ rolling_average_label|lower }}
+            covers that game and the {{ analysis.rolling_window - 1 }} games
+            before it, and early-season points use every game played so far.
+            The dashed line is the team's average across the
+            completed games currently stored for this season.
+          </p>
+          <p>
+            {% if league_comparison %}
+              The dotted line is MLB overall.
+            {% endif %}
+            {{ league_comparison_note }}
+            {% if league_comparison %}
+              A positive <strong>vs MLB</strong> value means
+              {{ analysis.team_name }} averaged more hits per game than MLB
+              across the stored season, and a negative value fewer. It is
+              descriptive context, not a measure of significance.
+            {% endif %}
+          </p>
+        </div>
       </section>
     {% endif %}
   {% endif %}
@@ -91,7 +100,7 @@
 
 {% block footer %}
   {% if state == "ok" %}
-    <p>Data through {{ data_through }}.</p>
+    <span>Data through {{ data_through }}</span>
   {% endif %}
-  <p>Source: MLB Stats API via python-mlb-statsapi.</p>
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
 {% endblock %}

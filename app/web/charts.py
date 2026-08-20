@@ -48,7 +48,11 @@ _TEAL = "#0f8b8d"
 _AMBER = "#b26a00"
 _RAW_LINE = "#b7c7d8"
 _RAW_MARKER = "#7c93ab"
-_GRID = "#e6ebf1"
+_GRID = "#dbe2ea"
+_AXIS_LINE = "#c9d3de"
+_AXIS_INK = "#5b6b7c"
+_AXIS_TITLE_FONT = {"size": 12, "color": _AXIS_INK}
+_TICK_FONT = {"size": 11, "color": _AXIS_INK}
 
 CHART_CONFIG = {
     "responsive": True,
@@ -151,7 +155,7 @@ def build_team_hits_figure(
         # Axis automargin sizes the gutters, which keeps the plot area as wide
         # as possible on a narrow phone screen.
         margin={"l": 8, "r": 8, "t": 8, "b": 8},
-        height=440,
+        height=470,
         hovermode="closest",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -159,21 +163,32 @@ def build_team_hits_figure(
         legend={
             "orientation": "h",
             "yanchor": "bottom",
-            "y": 1.02,
-            "xanchor": "left",
-            "x": 0,
-            "font": {"size": 12},
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
         },
         xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 8},
-            "gridcolor": _GRID,
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            # Only the horizontal gridlines are drawn: they are what a reader
+            # measures a value against, and vertical lines only add noise.
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
             "zeroline": False,
             "rangemode": "tozero",
             "automargin": True,
         },
         yaxis={
-            "title": {"text": Y_AXIS_TITLE, "standoff": 8},
+            "title": {
+                "text": Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
             "gridcolor": _GRID,
+            "griddash": "dot",
             "zeroline": False,
             "rangemode": "tozero",
             # Whole numbers of hits; the range still grows with the data.
@@ -251,7 +266,7 @@ def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
     figure.update_layout(
         template="plotly_white",
         margin={"l": 8, "r": 8, "t": 8, "b": 8},
-        height=440,
+        height=470,
         hovermode="closest",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -259,21 +274,32 @@ def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
         legend={
             "orientation": "h",
             "yanchor": "bottom",
-            "y": 1.02,
-            "xanchor": "left",
-            "x": 0,
-            "font": {"size": 12},
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
         },
         xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 8},
-            "gridcolor": _GRID,
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            # Only the horizontal gridlines are drawn: they are what a reader
+            # measures a value against, and vertical lines only add noise.
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
             "zeroline": False,
             "rangemode": "tozero",
             "automargin": True,
         },
         yaxis={
-            "title": {"text": STRIKEOUTS_Y_AXIS_TITLE, "standoff": 8},
+            "title": {
+                "text": STRIKEOUTS_Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
             "gridcolor": _GRID,
+            "griddash": "dot",
             "zeroline": False,
             # Starts at zero like the hits chart, and grows with the data. No
             # fixed maximum: a team that strikes out 20 times must still fit.
