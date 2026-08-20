@@ -70,6 +70,13 @@ before it is accepted:
   mismatch means the `season` parameter was not honored, which would silently
   ingest the wrong club set — a data-integrity failure, not a value to work
   around.
+- No team id may appear twice among the eligible clubs. A repeat is refused
+  with `MlbTeamDiscoveryError` naming the id and the season, never silently
+  deduplicated: `teams_discovered` is the number coverage is measured against,
+  so collapsing a duplicate would quietly shrink what the run claims to have
+  covered. Two different names under one id is the same failure — the id is the
+  identity every stored record is keyed by. A duplicate among *ineligible*
+  clubs is irrelevant, since those never enter the run.
 
 Clubs are returned sorted by name then id, so a run visits them in a stable,
 reproducible order.
@@ -111,6 +118,23 @@ Do not assume a season has 30 teams, current franchise names, the current league
 structure, or 162 games per club. Nothing in the implementation assumes any of
 those. A historical import should be spot-checked against a known club list the
 first time it is run.
+
+### Splits the package discards before the application sees them
+
+`python-mlb-statsapi` drops a stat split whose raw stat object is empty. A
+completed game can therefore be missing from the parsed hitting game log
+without any error being raised anywhere upstream of this application.
+
+That limitation still exists — the package is unchanged, and the batting line
+for such a game is simply not available. What changed is that the application
+now **detects the consequence**: the completed game is still in the schedule, so
+the reverse completeness check in section 5 finds it missing from the normalized
+set and refuses the team-season.
+
+This does not recover the missing batting data. It converts a silently short
+team-season into an explicit failure, so the club is reported failed and the
+season's coverage is recorded `INCOMPLETE` rather than `COMPLETE`. Re-running
+later is the remedy, if and when upstream returns the split.
 
 ## 4. Architecture
 
@@ -175,14 +199,31 @@ measurements.
 
 ### What "covered" means
 
-A season's coverage is `COMPLETE` when, in a single league-wide run:
+A season's coverage is `COMPLETE` when, in a single league-wide run, **both**
+of these held:
 
-> every MLB team discovered for that season was attempted and successfully
-> ingested.
+1. every MLB team discovered for that season was attempted and successfully
+   ingested; and
+2. for each of those teams, every completed regular-season schedule game was
+   represented in the normalized hitting game log.
+
+The second condition is enforced inside the existing team-season path, not by
+the league service. `get_team_game_batting_lines` compares the set of completed
+schedule games — `codedGameState` in `{"F", "O"}`, after the existing `gamePk`
+deduplication that folds a postponed row into its made-up one — against the set
+of games it normalized. A completed game with no batting line raises
+`TeamGameDataError` naming the team, the season, and the missing `gamePk`s, so
+that club fails and the league run cannot be `COMPLETE`.
+
+This means a club counted as succeeded is a club whose stored season has no
+known hole in it. Missing games are never filled with zeros and a short season
+is never returned as if it were whole.
 
 Coverage is **not** inferred from any of: the number of stored rows, thirty team
 ids being present, 4,860 team-game records existing, 162 games per club, or the
-process exit code alone. It is recorded from what the run actually did.
+process exit code alone. It is recorded from what the run actually did. Adding
+the per-game check does not change that — it strengthens what "successfully
+ingested" means for one club, without introducing an expected game count.
 
 The counts a run reports satisfy, and the schemas enforce:
 
@@ -305,8 +346,22 @@ record RUNNING                      short transaction, committed
 for each team:
     fetch team-season from MLB      network only, no transaction
     persist team-season             short transaction, committed
+build and validate the result       no transaction
 record COMPLETE / INCOMPLETE        short transaction, committed
 ```
+
+The last two steps are in that order deliberately. `LeagueSeasonIngestionResult`
+enforces invariants the coverage row cannot express on its own — each discovered
+team appearing exactly once, aggregates matching the summed per-team counts,
+status agreeing with the failure count. Recording coverage first would let the
+database claim `COMPLETE` for a run the domain model then rejects. So the
+validated result is the *precondition* for writing coverage, not a description
+of what was already written.
+
+If that validation fails, the error propagates and the season's row stays
+`RUNNING` — the honest state, meaning the run did not establish trustworthy
+coverage. Teams already ingested stay committed; only the coverage claim is
+withheld.
 
 Each team-season commits on its own, using the existing team ingestion
 transaction semantics unchanged: MLB retrieval completes before the transaction
@@ -350,6 +405,8 @@ failed":
 | Invalid season input | `InvalidSeasonError` | Nothing requested, no state written |
 | Team discovery failed upstream | `MlbTeamDiscoveryError` | Nothing attempted, no state written |
 | Zero eligible teams discovered | `NoMlbTeamsDiscoveredError` | Nothing attempted, no state written |
+| Same team id discovered twice | `MlbTeamDiscoveryError` | Nothing attempted, no state written |
+| A club's season is missing a completed game | `TeamGameDataError`, recorded per team | Other teams continue; run is `INCOMPLETE` |
 | One team's MLB fetch or persistence failed | Recorded per team | Other teams continue; run is `INCOMPLETE` |
 | Coverage metadata could not be persisted | `LeagueIngestionStateError` | Raised; coverage is unknown |
 

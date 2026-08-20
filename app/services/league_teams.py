@@ -91,7 +91,37 @@ def _discover(client: MlbTeamDirectoryClient, season: int) -> list[MlbTeam]:
         raise NoMlbTeamsDiscoveredError(
             f"MLB returned no Major League teams for {season}"
         )
+    _reject_duplicate_team_ids(discovered, season)
     return sorted(discovered, key=lambda team: (team.team_name, team.team_id))
+
+
+def _reject_duplicate_team_ids(teams: list[MlbTeam], season: int) -> None:
+    """Refuse a discovery response that names the same club twice.
+
+    A repeated team id is not deduplicated. Downstream, ``teams_discovered``
+    is what league coverage is measured against, so a silently collapsed
+    duplicate would mean the number of teams the run claims to have covered no
+    longer matches the number MLB reported. A club appearing twice also means
+    upstream identity is unreliable for this season, which is a data-integrity
+    problem to surface rather than tidy away.
+
+    Two different names under one id is the same failure, not a worse one: the
+    id is the identity every downstream record is keyed by.
+    """
+    seen: dict[int, str] = {}
+    for team in teams:
+        known = seen.get(team.team_id)
+        if known is None:
+            seen[team.team_id] = team.team_name
+            continue
+        names = (
+            f"twice as {known!r}"
+            if known == team.team_name
+            else f"as both {known!r} and {team.team_name!r}"
+        )
+        raise MlbTeamDiscoveryError(
+            f"MLB returned team {team.team_id} more than once for {season} ({names})"
+        )
 
 
 def _is_major_league_club(team: Team) -> bool:

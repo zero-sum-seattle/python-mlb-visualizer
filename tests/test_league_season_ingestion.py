@@ -48,7 +48,12 @@ from app.services.league_teams import (
 from app.services.team_game_logs import TeamGameDataError, TeamNotFoundError
 from app.services.team_season_ingestion import TeamSeasonIngestionError
 from tests.test_league_teams import MLB_SPORT, make_team
-from tests.test_team_game_logs import build_schedule, build_team_stats, load_payload
+from tests.test_team_game_logs import (
+    build_schedule,
+    build_team_stats,
+    drop_game_log_splits,
+    load_payload,
+)
 
 SEASON = 2025
 CUBS_ID = 112
@@ -708,3 +713,216 @@ def test_a_failed_coverage_write_is_reported_with_its_cause(
             session=migrated_session, season=SEASON, client=make_league_client()
         )
     assert exc_info.value.__cause__ is cause
+
+
+# --------------------------------------------------------------------------
+# A team-season refused for incompleteness must not abort the league
+# --------------------------------------------------------------------------
+
+NATIONALS_ID = 120
+NATIONALS_NAME = "Washington Nationals"
+MISSING_GAME_PK = 776640
+
+
+def league_client_missing_one_mariners_game() -> FakeLeagueMlb:
+    """A three-club league whose middle club is missing a completed game.
+
+    Discovery sorts by name, so the clubs are visited Cubs, Mariners,
+    Nationals. Putting the failure in the middle is what proves the run
+    continues rather than stopping at the first bad club.
+    """
+    mariners_log = drop_game_log_splits(
+        retarget(
+            load_payload("cubs_2025_hitting_game_log"), MARINERS_ID, MARINERS_NAME
+        ),
+        MISSING_GAME_PK,
+    )
+    return FakeLeagueMlb(
+        teams=[
+            make_team(CUBS_ID, CUBS_NAME),
+            make_team(MARINERS_ID, MARINERS_NAME),
+            make_team(NATIONALS_ID, NATIONALS_NAME),
+        ],
+        sources={
+            CUBS_ID: build_source(CUBS_ID, CUBS_NAME),
+            MARINERS_ID: build_source(
+                MARINERS_ID, MARINERS_NAME, team_stats=build_team_stats(mariners_log)
+            ),
+            NATIONALS_ID: build_source(NATIONALS_ID, NATIONALS_NAME),
+        },
+    )
+
+
+def test_a_short_team_season_does_not_abort_the_league(
+    migrated_session: Session,
+) -> None:
+    client = league_client_missing_one_mariners_game()
+    result = ingest_league_season(
+        session=migrated_session, season=SEASON, client=client
+    )
+
+    assert result.status is LeagueSeasonIngestionStatus.INCOMPLETE
+    assert (result.teams_discovered, result.teams_succeeded, result.teams_failed) == (
+        3,
+        2,
+        1,
+    )
+
+
+def test_every_club_after_the_failure_is_still_attempted(
+    migrated_session: Session,
+) -> None:
+    client = league_client_missing_one_mariners_game()
+    ingest_league_season(session=migrated_session, season=SEASON, client=client)
+    assert client.team_stats_calls == [CUBS_ID, MARINERS_ID, NATIONALS_ID]
+
+
+def test_the_short_team_season_writes_no_partial_rows(
+    migrated_session: Session,
+) -> None:
+    """Normalization fails before the team's transaction ever begins."""
+    client = league_client_missing_one_mariners_game()
+    ingest_league_season(session=migrated_session, season=SEASON, client=client)
+    assert list_team_season(migrated_session, team_id=MARINERS_ID, season=SEASON) == []
+
+
+def test_clubs_around_the_failure_remain_committed(
+    migrated_session: Session,
+) -> None:
+    client = league_client_missing_one_mariners_game()
+    ingest_league_season(session=migrated_session, season=SEASON, client=client)
+    for team_id in (CUBS_ID, NATIONALS_ID):
+        stored = list_team_season(migrated_session, team_id=team_id, season=SEASON)
+        assert len(stored) == CUBS_GAME_COUNT
+    assert stored_row_count(migrated_session) == CUBS_GAME_COUNT * 2
+
+
+def test_the_short_team_season_is_named_in_the_team_results(
+    migrated_session: Session,
+) -> None:
+    client = league_client_missing_one_mariners_game()
+    result = ingest_league_season(
+        session=migrated_session, season=SEASON, client=client
+    )
+    failed = [
+        team
+        for team in result.team_results
+        if team.status is LeagueTeamIngestionStatus.FAILED
+    ]
+    assert [(team.team_id, team.team_name) for team in failed] == [
+        (MARINERS_ID, MARINERS_NAME)
+    ]
+    assert failed[0].error is not None
+    assert "TeamGameDataError" in failed[0].error
+    assert str(MISSING_GAME_PK) in failed[0].error
+
+
+def test_a_short_team_season_records_incomplete_coverage(
+    migrated_session: Session,
+) -> None:
+    client = league_client_missing_one_mariners_game()
+    ingest_league_season(session=migrated_session, season=SEASON, client=client)
+    state = get_league_season_ingestion(migrated_session, season=SEASON)
+    assert state is not None
+    assert state.status is LeagueSeasonIngestionStatus.INCOMPLETE
+    assert (
+        state.expected_team_count,
+        state.successful_team_count,
+        state.failed_team_count,
+    ) == (3, 2, 1)
+
+
+# --------------------------------------------------------------------------
+# Duplicate discovery stops the run before anything is attempted or recorded
+# --------------------------------------------------------------------------
+
+
+def duplicate_discovery_client() -> FakeLeagueMlb:
+    return FakeLeagueMlb(
+        teams=[
+            make_team(CUBS_ID, CUBS_NAME),
+            make_team(MARINERS_ID, MARINERS_NAME),
+            make_team(CUBS_ID, CUBS_NAME),
+        ],
+        sources={
+            CUBS_ID: build_source(CUBS_ID, CUBS_NAME),
+            MARINERS_ID: build_source(MARINERS_ID, MARINERS_NAME),
+        },
+    )
+
+
+def test_duplicate_discovery_fails_the_league_run(migrated_session: Session) -> None:
+    with pytest.raises(MlbTeamDiscoveryError):
+        ingest_league_season(
+            session=migrated_session, season=SEASON, client=duplicate_discovery_client()
+        )
+
+
+def test_duplicate_discovery_starts_no_team_ingestion(
+    migrated_session: Session,
+) -> None:
+    client = duplicate_discovery_client()
+    with pytest.raises(MlbTeamDiscoveryError):
+        ingest_league_season(session=migrated_session, season=SEASON, client=client)
+    assert client.team_stats_calls == []
+    assert stored_row_count(migrated_session) == 0
+
+
+def test_duplicate_discovery_writes_no_coverage_row(
+    migrated_session: Session,
+) -> None:
+    """Coverage is recorded only once the set of teams to cover is trustworthy."""
+    with pytest.raises(MlbTeamDiscoveryError):
+        ingest_league_season(
+            session=migrated_session, season=SEASON, client=duplicate_discovery_client()
+        )
+    assert get_league_season_ingestion(migrated_session, season=SEASON) is None
+
+
+# --------------------------------------------------------------------------
+# Coverage is never recorded COMPLETE before the result model accepts the run
+# --------------------------------------------------------------------------
+
+
+def test_final_result_validation_failure_leaves_coverage_running(
+    migrated_session: Session,
+) -> None:
+    """The database must not claim COMPLETE for a result the domain rejects.
+
+    The result model is replaced at the service's own boundary so that building
+    it fails the way a genuine invariant breach would, without weakening the
+    real validators that exist to catch exactly that.
+    """
+    with (
+        patch(
+            "app.services.league_season_ingestion.LeagueSeasonIngestionResult",
+            side_effect=ValueError("league result rejected"),
+        ),
+        pytest.raises(ValueError, match="league result rejected"),
+    ):
+        ingest_league_season(
+            session=migrated_session, season=SEASON, client=make_league_client()
+        )
+
+    state = get_league_season_ingestion(migrated_session, season=SEASON)
+    assert state is not None
+    assert state.status is not LeagueSeasonIngestionStatus.COMPLETE
+    assert state.status is LeagueSeasonIngestionStatus.RUNNING
+    assert state.completed_at is None
+
+
+def test_a_rejected_final_result_still_leaves_ingested_teams_committed(
+    migrated_session: Session,
+) -> None:
+    """The teams really were ingested; only the coverage claim is withheld."""
+    with (
+        patch(
+            "app.services.league_season_ingestion.LeagueSeasonIngestionResult",
+            side_effect=ValueError("league result rejected"),
+        ),
+        pytest.raises(ValueError),
+    ):
+        ingest_league_season(
+            session=migrated_session, season=SEASON, client=make_league_client()
+        )
+    assert stored_row_count(migrated_session) == CUBS_GAME_COUNT * 2

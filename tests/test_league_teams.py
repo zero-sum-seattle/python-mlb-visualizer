@@ -191,3 +191,54 @@ def test_discovery_opens_and_closes_its_own_client_when_none_is_given() -> None:
             MlbTeam(team_id=112, team_name="Chicago Cubs", season=SEASON)
         ]
     assert closed == [True]
+
+
+def test_a_repeated_team_id_is_refused() -> None:
+    """A duplicate upstream identity is surfaced, never quietly collapsed."""
+    directory = FakeTeamDirectory([CUBS, MARINERS, make_team(112, "Chicago Cubs")])
+    with pytest.raises(MlbTeamDiscoveryError) as excinfo:
+        discover_mlb_teams(SEASON, client=directory)
+    message = str(excinfo.value)
+    assert "112" in message
+    assert str(SEASON) in message
+
+
+def test_a_repeated_team_id_with_a_conflicting_name_is_refused() -> None:
+    """Two names under one id is the same integrity failure, not a lesser one."""
+    directory = FakeTeamDirectory([CUBS, make_team(112, "Chicago Cubs (AL)")])
+    with pytest.raises(MlbTeamDiscoveryError) as excinfo:
+        discover_mlb_teams(SEASON, client=directory)
+    message = str(excinfo.value)
+    assert "112" in message
+    assert "Chicago Cubs" in message
+    assert "Chicago Cubs (AL)" in message
+
+
+def test_duplicate_ids_are_not_silently_deduplicated() -> None:
+    """Collapsing the duplicate would understate what the run must cover."""
+    directory = FakeTeamDirectory([CUBS, make_team(112, "Chicago Cubs")])
+    with pytest.raises(MlbTeamDiscoveryError):
+        discover_mlb_teams(SEASON, client=directory)
+
+
+def test_distinct_clubs_sharing_a_name_are_allowed() -> None:
+    """Only the id is an identity; a shared name alone is not a conflict."""
+    directory = FakeTeamDirectory([CUBS, make_team(999, "Chicago Cubs")])
+    assert [team.team_id for team in discover_mlb_teams(SEASON, client=directory)] == [
+        112,
+        999,
+    ]
+
+
+def test_a_duplicate_among_ineligible_clubs_does_not_fail_discovery() -> None:
+    """Excluded clubs never reach the league run, so they cannot duplicate it."""
+    directory = FakeTeamDirectory(
+        [
+            CUBS,
+            make_team(500, "Some Affiliate", sport=AAA_SPORT),
+            make_team(500, "Some Affiliate", sport=AAA_SPORT),
+        ]
+    )
+    assert [team.team_id for team in discover_mlb_teams(SEASON, client=directory)] == [
+        112
+    ]

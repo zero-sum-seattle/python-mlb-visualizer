@@ -12,6 +12,15 @@ overlap is validated for every game rather than assumed, so an upstream or
 package-model change surfaces as a ``TeamGameDataError`` instead of a silently
 wrong record.
 
+Both directions of that join are checked. Every game log split must have a
+schedule entry, and — just as importantly — every completed game in the
+schedule must end up with a normalized batting line. The reverse direction is
+what catches a split that never reached this code: ``python-mlb-statsapi``
+discards a stat split whose raw stat object is empty, which would otherwise
+leave a completed game silently absent from an otherwise healthy-looking
+team-season. A team-season missing a completed game is refused rather than
+returned short, because a caller cannot tell a short season from a real one.
+
 See ``docs/team-game-data-spike.md`` for the investigation behind this choice.
 """
 
@@ -148,9 +157,56 @@ def _collect_batting_lines(
             ),
         )
 
+    _require_every_completed_scheduled_game(
+        scheduled_games=scheduled_games,
+        normalized=lines,
+        team_id=team_id,
+        season=season,
+    )
+
     return sorted(
         lines.values(),
         key=lambda line: (line.game_date, line.game_number, line.game_pk),
+    )
+
+
+def _require_every_completed_scheduled_game(
+    *,
+    scheduled_games: dict[int, ScheduleGames],
+    normalized: dict[int, TeamGameBattingLine],
+    team_id: int,
+    season: int,
+) -> None:
+    """Refuse a team-season whose game log is missing a completed game.
+
+    Walking the game log proves every split has a schedule entry. This proves
+    the reverse: that every completed regular-season game the schedule lists is
+    represented by exactly one normalized batting line.
+
+    ``scheduled_games`` is already deduplicated by ``gamePk``, keeping the
+    completed row when a postponed or suspended game also appears under its
+    original date, so a made-up or resumed game counts once rather than twice.
+
+    A missing game cannot be filled in: the batting line simply was not
+    returned. Recording zeros would fabricate a game nobody played that way,
+    and returning the season one game short would let league coverage be marked
+    COMPLETE over an incomplete dataset. Both are worse than failing.
+    """
+    missing = sorted(
+        game_pk
+        for game_pk, game in scheduled_games.items()
+        if _is_completed(game) and game_pk not in normalized
+    )
+    if not missing:
+        return
+
+    listed = ", ".join(str(game_pk) for game_pk in missing)
+    plural = "s" if len(missing) > 1 else ""
+    raise TeamGameDataError(
+        f"{len(missing)} completed regular-season game{plural} for team "
+        f"{team_id} in {season} {'are' if len(missing) > 1 else 'is'} in the "
+        f"schedule but absent from the hitting game log: {listed}. The "
+        f"team-season is incomplete and was not returned."
     )
 
 

@@ -24,12 +24,18 @@ No database transaction is ever held open across an MLB request::
     for each team:
         fetch team-season from MLB      network only, no transaction
         persist team-season             short transaction, committed
+    build and validate the result       no transaction
     record COMPLETE / INCOMPLETE        short transaction, committed
 
 Each team-season therefore commits on its own. One club failing does not undo
 the clubs that already succeeded: those rows stay committed, the run is recorded
 as INCOMPLETE, and a rerun re-attempts every team using the existing idempotent
 upsert.
+
+The final result is constructed and validated before coverage is recorded, so a
+result the domain model rejects can never leave the database claiming COMPLETE.
+If that validation fails the error propagates and the row stays ``RUNNING``,
+which is the honest state: the run did not establish trustworthy coverage.
 
 Crash behavior
 --------------
@@ -198,26 +204,22 @@ def _ingest(
     )
     failed = len(team_results) - succeeded
     completed_at = _now()
-    with _coverage_transaction(session, season):
-        record_league_season_ingestion_finish(
-            session,
-            season=season,
-            expected_team_count=len(teams),
-            successful_team_count=succeeded,
-            failed_team_count=failed,
-            started_at=started_at,
-            completed_at=completed_at,
-        )
 
-    return LeagueSeasonIngestionResult(
+    # Built and validated before any coverage state is written. The result
+    # model enforces invariants the coverage row cannot express on its own,
+    # such as each discovered team appearing exactly once. Persisting first
+    # would let the database claim COMPLETE for a run the domain model then
+    # rejects, so the validated result is the precondition for recording
+    # coverage rather than a description of what was already recorded.
+    result = LeagueSeasonIngestionResult(
         season=season,
         teams_discovered=len(teams),
         teams_succeeded=succeeded,
         teams_failed=failed,
-        team_game_records_fetched=sum(result.fetched for result in team_results),
-        inserted=sum(result.inserted for result in team_results),
-        updated=sum(result.updated for result in team_results),
-        unchanged=sum(result.unchanged for result in team_results),
+        team_game_records_fetched=sum(team.fetched for team in team_results),
+        inserted=sum(team.inserted for team in team_results),
+        updated=sum(team.updated for team in team_results),
+        unchanged=sum(team.unchanged for team in team_results),
         status=(
             LeagueSeasonIngestionStatus.COMPLETE
             if failed == 0
@@ -227,6 +229,19 @@ def _ingest(
         completed_at=completed_at,
         team_results=tuple(team_results),
     )
+
+    with _coverage_transaction(session, season):
+        record_league_season_ingestion_finish(
+            session,
+            season=season,
+            expected_team_count=result.teams_discovered,
+            successful_team_count=result.teams_succeeded,
+            failed_team_count=result.teams_failed,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+        )
+
+    return result
 
 
 def _ingest_one_team(

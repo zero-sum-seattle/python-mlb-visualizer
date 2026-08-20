@@ -771,3 +771,101 @@ def test_conflicting_duplicate_strikeouts_raise_data_error() -> None:
     with pytest.raises(TeamGameDataError) as excinfo:
         collect(client)
     assert "strikeouts 5 vs 12" in str(excinfo.value)
+
+
+def drop_game_log_splits(payload: dict[str, Any], *game_pks: int) -> dict[str, Any]:
+    """Copy a game log payload with the named games' splits removed.
+
+    This reproduces the upstream shape the package can produce on its own:
+    ``python-mlb-statsapi`` drops a split whose raw stat object is empty, so a
+    completed game can be absent from the parsed game log even though the
+    schedule still lists it.
+    """
+    copied = copy.deepcopy(payload)
+    dropped = set(game_pks)
+    for stat_group in copied["stats"]:
+        stat_group["splits"] = [
+            split
+            for split in stat_group["splits"]
+            if split["game"]["gamePk"] not in dropped
+        ]
+    return copied
+
+
+def client_missing(*game_pks: int) -> FakeMlb:
+    """A Cubs client whose game log is missing the named completed games."""
+    return FakeMlb(
+        team_stats=build_team_stats(
+            drop_game_log_splits(load_payload("cubs_2025_hitting_game_log"), *game_pks)
+        ),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+
+
+def test_every_completed_scheduled_game_is_represented() -> None:
+    """The captured season is whole, so the completeness check must not fire."""
+    lines = collect(make_client())
+    completed_schedule_pks = {776704, 777459, 776691, 776676, 776640, 776618}
+    assert {line.game_pk for line in lines} == completed_schedule_pks
+
+
+def test_completed_game_missing_from_the_game_log_raises_data_error() -> None:
+    """A short team-season is refused rather than returned one game light."""
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_missing(776640))
+    message = str(excinfo.value)
+    assert "776640" in message
+    assert str(CUBS_ID) in message
+    assert str(SEASON) in message
+    assert "hitting game log" in message
+
+
+def test_multiple_missing_completed_games_are_all_named() -> None:
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_missing(776640, 776704))
+    message = str(excinfo.value)
+    assert "776640" in message
+    assert "776704" in message
+    assert "2 completed regular-season games" in message
+
+
+def test_missing_completed_game_is_not_replaced_by_a_zeroed_record() -> None:
+    """No fabricated batting line may stand in for data MLB did not return."""
+    with pytest.raises(TeamGameDataError):
+        collect(client_missing(776640))
+
+
+def test_non_completed_schedule_games_absent_from_the_game_log_do_not_fail() -> None:
+    """Cancelled and postponed games are never expected in the game log."""
+    lines = get_team_game_batting_lines(
+        CUBS_ID,
+        SEASON,
+        client=make_client(
+            game_log="edge_cases_hitting_game_log",
+            schedule="edge_cases_schedule",
+        ),
+    )
+    assert [line.game_pk for line in lines] == [776500]
+
+
+def test_postponed_and_made_up_rows_count_as_one_required_game() -> None:
+    """776691 appears twice in the schedule: postponed, then completed."""
+    lines = collect(make_client())
+    assert sum(1 for line in lines if line.game_pk == 776691) == 1
+
+
+def test_missing_made_up_game_is_reported_once_not_twice() -> None:
+    """The duplicated schedule rows must not inflate the missing-game count."""
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_missing(776691))
+    message = str(excinfo.value)
+    assert "1 completed regular-season game " in message
+    assert message.count("776691") == 1
+
+
+def test_completeness_check_adds_no_upstream_request() -> None:
+    """The check reuses the schedule already fetched for normalization."""
+    client = client_missing(776640)
+    with pytest.raises(TeamGameDataError):
+        collect(client)
+    assert set(client.calls) == {"get_team", "get_team_stats", "get_schedule"}
