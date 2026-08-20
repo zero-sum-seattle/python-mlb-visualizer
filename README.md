@@ -15,6 +15,8 @@ Interactive MLB statistics visualization web application powered by
 
 **Milestone 3.5 — Team batting strikeouts over time** is complete.
 
+**Milestone 4 — League-wide season ingestion and completeness** is complete.
+
 Milestone 0 provides a FastAPI application with Jinja2 templates, Pydantic
 Settings configuration, pytest coverage, Ruff linting/formatting, and GitHub
 Actions CI.
@@ -33,6 +35,12 @@ Milestone 3.5 adds a second metric page on the same foundation: a team's
 batting strikeouts per game. Batting strikeouts were already present in the
 hitting game log Milestone 1 retrieves, so no new MLB request was added. See
 [docs/team-strikeouts-visualization.md](docs/team-strikeouts-visualization.md).
+
+Milestone 4 adds league-wide season ingestion: season-aware MLB team discovery,
+a league ingestion service that reuses the existing team-season path for every
+discovered club, and a persisted record of whether a run actually covered them
+all. It adds no visualization. See
+[docs/league-season-ingestion.md](docs/league-season-ingestion.md).
 
 ## Planned MVP
 
@@ -281,6 +289,68 @@ unchanged rows).
 **No automatic deletion:** rows already stored but missing from the latest MLB
 response are kept. See `docs/team-season-ingestion.md`.
 
+### League-season import (Milestone 4)
+
+Import every MLB team for one season after migrations:
+
+```bash
+poetry run alembic upgrade head
+poetry run python scripts/import_league_season.py --season 2025
+```
+
+```text
+MLB League Import — 2025
+Teams discovered: 30
+[ 1/30] Athletics ................. unchanged
+[ 2/30] Los Angeles Angels ........ updated
+...
+[30/30] Washington Nationals ...... inserted
+Season: 2025
+Teams discovered: 30
+Teams succeeded: 30
+Teams failed: 0
+Team-game records fetched: 4860
+Inserted: 0
+Updated: 4860
+Unchanged: 0
+Ingestion coverage: COMPLETE
+```
+
+Counts above are illustrative; real values come from the run.
+
+JSON output, for a future scheduler or deployment tool:
+
+```bash
+poetry run python scripts/import_league_season.py --season 2025 --format json
+```
+
+With `--format json`, stdout carries only the serialized result. Progress and
+operational errors go to stderr.
+
+**Exit codes:** `0` complete coverage, `1` the run could not be carried out
+(invalid season, discovery failure, coverage state not persisted), `2` the run
+finished with at least one failed club.
+
+**Team discovery:** `Mlb.get_teams(sport_id=1, season=<year>)`. No list of
+current team ids is hardcoded anywhere.
+
+**Team-game records, not games:** one MLB game produces two team batting lines.
+A 30-team, 162-game season is 4,860 team-game records — 2,430 games.
+
+**Coverage, not season finality:** `COMPLETE` means every discovered club was
+successfully refreshed by that run. It does not assert the regular season has
+finished being played.
+
+**Partial failure:** clubs that succeeded stay committed; the run is recorded
+`INCOMPLETE` and a rerun is safe and idempotent.
+
+**Not connected to the web app:** loading a page never triggers an import, and
+no admin ingestion route was added.
+
+Live MLB access was unavailable in the environment this milestone was built in,
+so the 2025 import was not run against the real API. See
+`docs/league-season-ingestion.md` for what that leaves unverified.
+
 ### Selected retrieval strategy
 
 Team hitting `gameLog` splits joined on `gamePk` with a single team schedule
@@ -340,9 +410,12 @@ poetry run ruff format --check .
 │   │   ├── analytics.py
 │   │   ├── catalog.py
 │   │   ├── games.py
-│   │   └── ingestion.py
+│   │   ├── ingestion.py
+│   │   └── teams.py
 │   ├── services/
 │   │   ├── __init__.py
+│   │   ├── league_season_ingestion.py
+│   │   ├── league_teams.py
 │   │   ├── team_game_logs.py
 │   │   └── team_season_ingestion.py
 │   └── web/
@@ -363,9 +436,11 @@ poetry run ruff format --check .
 │           ├── error.html
 │           └── index.html
 ├── scripts/
+│   ├── import_league_season.py
 │   ├── inspect_game_logs.py
 │   └── import_team_season.py
 ├── docs/
+│   ├── league-season-ingestion.md
 │   ├── team-game-data-spike.md
 │   ├── team-hits-visualization.md
 │   └── team-season-ingestion.md
@@ -379,10 +454,15 @@ poetry run ruff format --check .
 │   ├── test_charts.py
 │   ├── test_formatting.py
 │   ├── test_game_schemas.py
+│   ├── test_import_league_season.py
 │   ├── test_import_team_season.py
+│   ├── test_ingestion_schemas.py
+│   ├── test_league_season_ingestion.py
+│   ├── test_league_teams.py
 │   ├── test_migrations.py
 │   ├── test_repositories.py
 │   ├── test_repositories_catalog.py
+│   ├── test_repositories_league.py
 │   ├── test_selection.py
 │   ├── test_team_game_logs.py
 │   ├── test_team_season_ingestion.py
@@ -399,9 +479,11 @@ poetry run ruff format --check .
 
 ## Later milestones
 
-League-wide ingestion is the recommended next step, because an honest MLB
-average comparison depends on it. See the recommendation in
-[docs/team-hits-visualization.md](docs/team-hits-visualization.md).
+League-wide ingestion landed in Milestone 4, so the league comparison it was a
+prerequisite for is now unblocked. MLB average lines, league ranks, percentiles,
+and team-vs-league comparisons belong to Milestone 5, and should check a
+season's stored ingestion coverage before presenting any league statistic. See
+[docs/league-season-ingestion.md](docs/league-season-ingestion.md).
 
 ## Disclaimer
 
