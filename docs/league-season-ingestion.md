@@ -260,6 +260,11 @@ itself assert, plus the coverage the application does assert.
 No separate season-state infrastructure was invented for this distinction. It is
 carried by naming, wording, and this document.
 
+Milestone 5 is the first reader of this state. `COMPLETE` is the only value
+that lets the team hits page describe a number as an MLB-wide average, and its
+wording repeats the distinction above rather than relaxing it. See
+`docs/team-vs-mlb-comparison.md`.
+
 ## 6. Persistence
 
 ### Schema

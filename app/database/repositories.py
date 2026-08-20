@@ -120,6 +120,36 @@ def list_team_season(
     return [record.to_domain() for record in records]
 
 
+def list_league_season(
+    session: Session,
+    *,
+    season: int,
+) -> list[TeamGameBattingLine]:
+    """Return every persisted batting line for a season, across all teams.
+
+    Whether that is actually MLB-wide is not a question this function answers.
+    It reports what is stored; the recorded league-season coverage state is
+    what says whether the stored rows may be described as covering the league.
+
+    Ordered by team, then in each team's chart order, so a run over the season
+    is reproducible. A full MLB season is roughly 4,860 team-game records, so
+    the rows are returned as domain objects and the statistics are calculated
+    in the analytics layer rather than pushed into SQL.
+    """
+    stmt = (
+        select(TeamGameBattingLineRecord)
+        .where(TeamGameBattingLineRecord.season == season)
+        .order_by(
+            TeamGameBattingLineRecord.team_id,
+            TeamGameBattingLineRecord.game_date,
+            TeamGameBattingLineRecord.game_number,
+            TeamGameBattingLineRecord.game_pk,
+        )
+    )
+    records = session.scalars(stmt).all()
+    return [record.to_domain() for record in records]
+
+
 def upsert_team_season(
     session: Session,
     *,

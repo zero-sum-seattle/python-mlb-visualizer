@@ -4,15 +4,18 @@ from datetime import date
 
 import pytest
 
+from app.analytics.league_hitting import compare_team_hits_to_league
 from app.analytics.team_hitting import build_team_hits_analysis
 from app.analytics.team_strikeouts import build_team_strikeouts_analysis
 from app.web.formatting import (
+    LEAGUE_COMPARISON_UNAVAILABLE_NOTE,
     build_strikeout_summary_cards,
     build_summary_cards,
+    format_league_comparison_note,
     format_long_date,
     format_matchup,
 )
-from tests.factories import make_season
+from tests.factories import make_league_hits_context, make_season
 
 
 def test_long_date_has_no_padded_day() -> None:
@@ -28,15 +31,31 @@ def test_matchup_uses_vs_at_home_and_at_on_the_road() -> None:
     assert format_matchup("Minnesota Twins", "away") == "at Minnesota Twins"
 
 
+def comparison(hits: list[int], *, window: int, mlb_hits_per_game: float):
+    """Build a team analysis and an MLB comparison against a chosen average."""
+    analysis = build_team_hits_analysis(make_season(hits), rolling_window=window)
+    league = make_league_hits_context(
+        total_hits=round(mlb_hits_per_game * 100), team_game_records=100
+    )
+    return analysis, compare_team_hits_to_league(analysis, league)
+
+
 def test_summary_cards_are_labelled_with_the_selected_window() -> None:
+    """Milestone 5 replaced the prior-window card with the MLB comparison.
+
+    ``TeamHitsSummary`` still calculates the prior-window change, and the
+    strikeouts page still shows it; only the hits card row changed, so that the
+    row keeps four cards instead of growing a fifth.
+    """
     analysis = build_team_hits_analysis(make_season([8] * 40), rolling_window=10)
     labels = [card.label for card in build_summary_cards(analysis)]
     assert labels == [
         "Recent 10-Game Avg",
         "Season Avg",
-        "vs Prior 10",
+        "vs MLB",
         "Games Played",
     ]
+    assert analysis.summary.change_vs_prior_window is not None
 
 
 def test_summary_card_values_are_rounded_for_display() -> None:
@@ -49,23 +68,36 @@ def test_summary_card_values_are_rounded_for_display() -> None:
     assert cards[3].value == "10"
 
 
-def test_change_card_is_signed() -> None:
-    analysis = build_team_hits_analysis(
-        make_season([4] * 5 + [7] * 5), rolling_window=5
-    )
-    assert build_summary_cards(analysis)[2].value == "+3.00"
+def test_league_card_is_signed() -> None:
+    above, above_comparison = comparison([9] * 10, window=5, mlb_hits_per_game=8.50)
+    card = build_summary_cards(above, above_comparison)[2]
+    assert (card.value, card.caption) == ("+0.50", "Hits per Game")
 
-    declining = build_team_hits_analysis(
-        make_season([9] * 5 + [8] * 5), rolling_window=5
-    )
-    assert build_summary_cards(declining)[2].value == "-1.00"
+    below, below_comparison = comparison([8] * 10, window=5, mlb_hits_per_game=8.25)
+    assert build_summary_cards(below, below_comparison)[2].value == "-0.25"
 
 
-def test_change_card_explains_a_missing_prior_window() -> None:
+def test_league_card_says_when_no_mlb_average_is_available() -> None:
+    """Without complete league coverage the card must not invent a number."""
     analysis = build_team_hits_analysis(make_season([6] * 9), rolling_window=5)
     card = build_summary_cards(analysis)[2]
     assert card.value == "—"
-    assert card.caption == "Not enough games"
+    assert card.caption == "Comparison unavailable"
+
+
+def test_league_note_explains_why_a_comparison_is_missing() -> None:
+    note = format_league_comparison_note(None)
+    assert note == LEAGUE_COMPARISON_UNAVAILABLE_NOTE
+    assert "complete league-season import" in note
+
+
+def test_league_note_reports_the_average_and_what_it_covers() -> None:
+    _, available = comparison([9] * 10, window=5, mlb_hits_per_game=8.20)
+    note = format_league_comparison_note(available)
+    assert "8.20 hits per game" in note
+    assert "100 team-game records" in note
+    assert "currently stored" in note
+    assert "finished being played" in note
 
 
 def test_hits_per_game_is_the_caption_for_rate_cards() -> None:

@@ -89,9 +89,15 @@ change  : recent_average - prior_window_average
 
 The comparison is only made when two **complete** windows exist, that is when
 `games_played >= 2 * rolling_window`. Otherwise `prior_window_average` and
-`change_vs_prior_window` are both `None` and the card reads `—` /
-"Not enough games". Comparing a full window against a partial one would report
-a difference caused by sample size rather than by hitting.
+`change_vs_prior_window` are both `None`. Comparing a full window against a
+partial one would report a difference caused by sample size rather than by
+hitting.
+
+> **Milestone 5 update.** The `vs Prior 15` card was replaced on this page by a
+> `vs MLB` card. Both summary values above are still calculated, validated, and
+> tested on `TeamHitsSummary`, and the strikeouts page still shows its own
+> `vs Prior N` card with the `—` / "Not enough games" behaviour described here.
+> See `docs/team-vs-mlb-comparison.md`.
 
 Summary formulas:
 
@@ -127,6 +133,11 @@ Three traces, in order:
 | 1 | `Game Hits` | thin grey line, small markers | game-to-game variation |
 | 2 | `{window}-Game Average` | thick teal line | the trend, visually dominant |
 | 3 | `Season Average` | dashed navy horizontal line | reference level |
+
+Milestone 5 renamed this third trace to `Team Season Average` and added an
+optional fourth trace, `MLB Average`, when the season has complete league
+coverage. With two horizontal reference lines on one chart, "Season Average" no
+longer said whose. See `docs/team-vs-mlb-comparison.md`.
 
 The rolling average joins its points with straight segments
 (`line.shape: "linear"`). Spline smoothing is deliberately not used: it bows
@@ -254,7 +265,14 @@ No team data has been imported yet
 and the import command. The page does not fetch anything from MLB to fill
 itself in.
 
-## 10. Why the MLB average is deferred
+## 10. Why the MLB average was deferred
+
+> **Milestone 5 update.** The MLB Average line now exists, under exactly the
+> condition this section asked for: it is drawn only when the selected season
+> has `COMPLETE` league-season coverage recorded by Milestone 4, and it is
+> omitted otherwise. The reasoning below is why it did not exist in Milestone 3
+> and is left as written. See `docs/team-vs-mlb-comparison.md`.
+
 
 The original mockup included an MLB Average line. It is deliberately not
 implemented.
@@ -269,6 +287,12 @@ as trustworthy as the data behind it. League comparison belongs after
 league-wide ingestion is defined and completeness can be checked.
 
 ## 11. Recommendation for Milestone 4
+
+> **Update.** Milestone 4 delivered the league-wide ingestion and coverage
+> state recommended here (`docs/league-season-ingestion.md`), and Milestone 5
+> delivered the MLB-average trace it unblocked
+> (`docs/team-vs-mlb-comparison.md`). League rank remains unimplemented.
+
 
 Define **league-wide ingestion** next, because it unblocks the most requested
 missing feature on this page and nothing else can honestly deliver it.

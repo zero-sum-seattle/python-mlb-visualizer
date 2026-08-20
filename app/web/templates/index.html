@@ -72,6 +72,18 @@
           the team's average across the completed games currently stored for
           this season.
         </p>
+        <p>
+          {% if league_comparison %}
+            The dotted line is MLB overall.
+          {% endif %}
+          {{ league_comparison_note }}
+          {% if league_comparison %}
+            A positive <strong>vs MLB</strong> value means
+            {{ analysis.team_name }} averaged more hits per game than MLB across
+            the stored season, and a negative value fewer. It is descriptive
+            context, not a measure of significance.
+          {% endif %}
+        </p>
       </section>
     {% endif %}
   {% endif %}

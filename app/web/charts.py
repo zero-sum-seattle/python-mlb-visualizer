@@ -16,12 +16,21 @@ import plotly.graph_objects as go
 from plotly.io import to_html
 from plotly.offline import get_plotlyjs
 
-from app.schemas.analytics import TeamHitsAnalysis, TeamStrikeoutsAnalysis
+from app.schemas.analytics import (
+    TeamHitsAnalysis,
+    TeamHitsLeagueComparison,
+    TeamStrikeoutsAnalysis,
+)
 from app.web.formatting import format_long_date, format_matchup
 
 CHART_DIV_ID = "team-hits-chart"
 RAW_HITS_TRACE_NAME = "Game Hits"
 SEASON_AVERAGE_TRACE_NAME = "Season Average"
+# The hits chart can carry two horizontal reference lines at once, so its
+# team line says whose average it is. The strikeout chart has one, and keeps
+# the shorter label.
+TEAM_SEASON_AVERAGE_TRACE_NAME = "Team Season Average"
+MLB_AVERAGE_TRACE_NAME = "MLB Average"
 
 X_AXIS_TITLE = "Season Game Number"
 Y_AXIS_TITLE = "Hits per Game"
@@ -34,6 +43,9 @@ STRIKEOUTS_Y_AXIS_TITLE = "Batting Strikeouts per Game"
 
 _NAVY = "#12263f"
 _TEAL = "#0f8b8d"
+# Distinct hue *and* distinct dash from the navy team line, so the two
+# reference lines stay apart in greyscale and for a colour-blind reader.
+_AMBER = "#b26a00"
 _RAW_LINE = "#b7c7d8"
 _RAW_MARKER = "#7c93ab"
 _GRID = "#e6ebf1"
@@ -51,8 +63,16 @@ def rolling_average_trace_name(rolling_window: int) -> str:
     return f"{rolling_window}-Game Average"
 
 
-def build_team_hits_figure(analysis: TeamHitsAnalysis) -> go.Figure:
-    """Build the hits-per-game figure for one team-season analysis."""
+def build_team_hits_figure(
+    analysis: TeamHitsAnalysis,
+    league_comparison: TeamHitsLeagueComparison | None = None,
+) -> go.Figure:
+    """Build the hits-per-game figure for one team-season analysis.
+
+    ``league_comparison`` adds a fourth trace, a horizontal MLB reference line.
+    It is optional: a season without complete league coverage has no MLB
+    average to draw, and the team's own chart must still render.
+    """
     game_numbers = [point.season_game_number for point in analysis.points]
     hits = [point.hits for point in analysis.points]
     rolling = [point.rolling_average for point in analysis.points]
@@ -107,12 +127,24 @@ def build_team_hits_figure(analysis: TeamHitsAnalysis) -> go.Figure:
         go.Scatter(
             x=[game_numbers[0], game_numbers[-1]],
             y=[season_average, season_average],
-            name=SEASON_AVERAGE_TRACE_NAME,
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
             mode="lines",
             line={"color": _NAVY, "width": 2, "dash": "dash"},
             hoverinfo="skip",
         )
     )
+    if league_comparison is not None:
+        mlb_average = league_comparison.league.hits_per_game
+        figure.add_trace(
+            go.Scatter(
+                x=[game_numbers[0], game_numbers[-1]],
+                y=[mlb_average, mlb_average],
+                name=MLB_AVERAGE_TRACE_NAME,
+                mode="lines",
+                line={"color": _AMBER, "width": 2, "dash": "dot"},
+                hoverinfo="skip",
+            )
+        )
 
     figure.update_layout(
         template="plotly_white",
