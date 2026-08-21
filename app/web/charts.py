@@ -3,11 +3,11 @@
 Kept out of the route so the figure contract can be tested without HTTP and so
 the route stays about request handling.
 
-The hits, batting strikeout, and runs figures are built by separate functions
-that share only the rendering helpers below. They look alike, but a single
-parameterized builder would have to encode which labels, colours, and axis
-semantics belong to which statistic, which is harder to read than three
-explicit builders.
+The hits, batting strikeout, runs, and normalized comparison figures are built
+by separate functions that share only the rendering helpers below. They look
+alike, but a single parameterized builder would have to encode which labels,
+colours, and axis semantics belong to which statistic, which is harder to read
+than four explicit builders.
 """
 
 from datetime import date
@@ -20,6 +20,7 @@ from plotly.offline import get_plotlyjs
 from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
+    TeamHittingComparisonAnalysis,
     TeamRunsAnalysis,
     TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
@@ -49,6 +50,12 @@ RUNS_CHART_DIV_ID = "team-runs-chart"
 RAW_RUNS_TRACE_NAME = "Game Runs"
 RUNS_Y_AXIS_TITLE = "Runs Scored per Game"
 
+COMPARISON_CHART_DIV_ID = "team-hitting-comparison-chart"
+HITS_INDEX_TRACE_NAME = "Hits Index"
+STRIKEOUTS_INDEX_TRACE_NAME = "Batting Strikeout Index"
+NORMALIZED_BASELINE_TRACE_NAME = "Baseline (100)"
+COMPARISON_Y_AXIS_TITLE = "Normalized Index (MLB Avg = 100)"
+
 _NAVY = "#12263f"
 _TEAL = "#0f8b8d"
 # Distinct hue *and* distinct dash from the navy team line, so the two
@@ -62,6 +69,11 @@ _AXIS_INK = "#5b6b7c"
 # The right gutter holds the reference-line label; the rest is sized by the
 # axes themselves.
 _MARGIN = {"l": 8, "r": 78, "t": 8, "b": 8}
+# The comparison has three longer legend entries and no right-edge label.
+# Its top band lets the horizontal legend wrap on a phone without covering the
+# plot. The small right gutter also keeps the final two-line date label inside
+# the SVG at 390px rather than letting Plotly hide that boundary tick.
+_COMPARISON_MARGIN = {"l": 8, "r": 32, "t": 76, "b": 8}
 _AXIS_TITLE_FONT = {"size": 12, "color": _AXIS_INK}
 _TICK_FONT = {"size": 11, "color": _AXIS_INK}
 
@@ -616,6 +628,123 @@ def build_team_runs_figure(
             "rangemode": "tozero",
             "tickformat": "d",
             "dtick": 2,
+            "automargin": True,
+        },
+    )
+    return figure
+
+
+def build_team_hitting_comparison_figure(
+    analysis: TeamHittingComparisonAnalysis,
+) -> go.Figure:
+    """Build the normalized hits-versus-batting-strikeouts figure.
+
+    Both solid lines are rolling team rates expressed as an index of their own
+    MLB-wide rate. The dotted line is the common 100 baseline. Colour separates
+    the two metrics, but deliberately does not encode good or bad: an index
+    above 100 only means the team recorded more of that metric than MLB.
+    """
+    game_numbers = [point.season_game_number for point in analysis.points]
+    game_dates = [point.game_date for point in analysis.points]
+    hits_indexes = [point.hits_index for point in analysis.points]
+    strikeout_indexes = [point.strikeouts_index for point in analysis.points]
+    hover_data = [
+        (
+            format_long_date(point.game_date),
+            point.opponent_name,
+            point.hits_index,
+            point.strikeouts_index,
+        )
+        for point in analysis.points
+    ]
+    hover_template = (
+        "<b>%{customdata[0]}</b><br>"
+        "Opponent: %{customdata[1]}<br>"
+        "Hits Index: %{customdata[2]:.1f}<br>"
+        "Batting Strikeout Index: %{customdata[3]:.1f}<extra></extra>"
+    )
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=hits_indexes,
+            customdata=hover_data,
+            name=HITS_INDEX_TRACE_NAME,
+            mode="lines",
+            # Straight segments connect values calculated at actual games;
+            # smoothing would imply intermediate indexes never calculated.
+            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
+            hovertemplate=hover_template,
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=strikeout_indexes,
+            customdata=hover_data,
+            name=STRIKEOUTS_INDEX_TRACE_NAME,
+            mode="lines",
+            line={"color": _NAVY, "width": 3.5, "shape": "linear"},
+            hovertemplate=hover_template,
+        )
+    )
+    baseline = analysis.baseline_index
+    figure.add_trace(
+        go.Scatter(
+            x=[game_numbers[0], game_numbers[-1]],
+            y=[baseline, baseline],
+            name=NORMALIZED_BASELINE_TRACE_NAME,
+            mode="lines",
+            # The MLB baseline is distinct in hue and line pattern from both
+            # team metrics, including when the chart is read in greyscale.
+            line={"color": _AMBER, "width": 2, "dash": "dot"},
+            hoverinfo="skip",
+        )
+    )
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
+    figure.update_layout(
+        template="plotly_white",
+        margin=_COMPARISON_MARGIN,
+        height=470,
+        hovermode="closest",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.03,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
+        },
+        xaxis={
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
+            "zeroline": False,
+            "rangemode": "tozero",
+            "automargin": True,
+        },
+        yaxis={
+            "title": {
+                "text": COMPARISON_Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
+            "gridcolor": _GRID,
+            "griddash": "dot",
+            "zeroline": False,
+            # Normalized values usually cluster around 100. Autorange keeps
+            # their movement legible instead of forcing an unrelated zero.
+            "tickformat": ".0f",
             "automargin": True,
         },
     )

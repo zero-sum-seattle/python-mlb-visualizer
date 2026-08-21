@@ -142,6 +142,7 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 - `/` — team hitting trends (hits per game)
 - `/strikeouts` — team batting strikeout trends
 - `/runs` — team run scoring trends (runs scored per game)
+- `/comparison` — normalized Hits/Game vs batting K/Game trends
 - `/health` — JSON health check
 
 ## Team hitting trends page
@@ -247,7 +248,7 @@ http://127.0.0.1:8000/runs?team_id=136&season=2025&window=15
 
 It takes the same `team_id`, `season`, and `window` parameters as the other
 metric pages, with the same defaults, and the navigation carries the current
-selection between all three. `/` and `/strikeouts` are unchanged.
+selection between the analytics pages. `/` and `/strikeouts` are unchanged.
 
 **Runs scored, not runs allowed.** Every label says so. Nothing on this page is
 a run differential, and the runs a team gave up are not stored or shown.
@@ -281,6 +282,41 @@ formulas and the limitations.
 required non-negative column since the first migration, so every stored
 team-season already has real run totals. This page added no column and no
 migration.
+
+## Team hitting trends comparison page
+
+`/comparison` plots rolling Hits/Game and batting Strikeouts/Game together only
+after normalizing each one to its own MLB average:
+
+```text
+http://127.0.0.1:8000/comparison?team_id=136&season=2025&window=15
+```
+
+```text
+Hits Index = rolling team Hits/Game / MLB Hits/Game * 100
+
+Batting Strikeout Index = rolling team batting K/Game
+                          / MLB batting K/Game
+                          * 100
+```
+
+`100` is MLB average for the named metric. Above 100 means above that metric's
+MLB average, not automatically better; for batting strikeouts it means the
+team's hitters struck out more times per game than MLB hitters.
+
+The page calculates no normalized values unless the existing league-season
+coverage state is `COMPLETE`, every league batting strikeout total is known,
+and both MLB baselines are positive. It never infers completeness from row
+counts or substitutes zero for unknown data. When those requirements are not
+met, the selectors and navigation remain usable and the page shows a concise
+unavailable state.
+
+The `Trend Gap` card is recent Hits Index minus recent K Index. It is arithmetic
+context only, not a validated overall offensive-performance statistic. The page
+adds no K%, regression, significance test, causal claim, ranking, or percentile.
+See
+[docs/team-hitting-trends-comparison.md](docs/team-hitting-trends-comparison.md)
+for the data-integrity rules, architecture, and statistical limitations.
 
 ## Team game-level hitting data
 

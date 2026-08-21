@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Hitting Trends Comparison
+  {%- else -%}
+    Team Hitting Trends Comparison
+  {%- endif -%}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Team Hitting Trends Comparison</h1>
+    <p class="page-intro__subtitle">
+      Compare rolling hits and batting strikeouts on the same MLB-average baseline.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    {% include "_selector_form.html" %}
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% elif state == "unavailable" %}
+      <section class="card notice" aria-live="polite">
+        <h2>Normalized comparison unavailable</h2>
+        <p>{{ unavailable_message }}</p>
+        {% if unavailable_command %}
+          <pre class="command"><code>{{ unavailable_command }}</code></pre>
+        {% endif %}
+        <p>
+          The individual Hits, Batting Strikeouts, and Runs pages remain available
+          for the selected team-season.
+        </p>
+      </section>
+    {% else %}
+      <section class="card chart-card chart-card--comparison">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} — Hits vs Batting Strikeouts</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure chart-card__figure--comparison">
+          {{ chart_html | safe }}
+        </div>
+      </section>
+
+      <section class="summary summary--comparison" aria-label="Comparison summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            Each point uses the trailing {{ analysis.rolling_window }}-game team
+            average ending at that game. <strong>Hits Index</strong> is rolling
+            team Hits/Game divided by MLB Hits/Game, times 100.
+            <strong>Batting Strikeout Index</strong> applies the same calculation
+            to batting K/Game. Early-season points use every completed game
+            available so far.
+          </p>
+          <p>
+            The differentiated baseline is 100, meaning MLB average for that
+            metric. Above 100 means above the MLB average, not automatically
+            better: for batting strikeouts it specifically means the team's
+            hitters struck out more times per game than MLB hitters.
+          </p>
+          <p>
+            The MLB baselines are {{ mlb_hits_per_game }} Hits/Game and
+            {{ mlb_strikeouts_per_game }} batting K/Game across the
+            {{ league_team_game_records }} team-game records currently stored for
+            {{ analysis.season }}. They are shown only because the latest
+            league-season import recorded complete coverage and every stored
+            strikeout total is known.
+          </p>
+          <p>
+            <strong>Trend Gap</strong> is simply the recent Hits Index minus the
+            recent K Index. It is not a validated overall offensive-performance
+            statistic. This comparison is descriptive only: it is not K%, a
+            ranking, a percentile, a significance test, or a causal claim.
+          </p>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <span>Data through {{ data_through }}</span>
+  {% endif %}
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
+{% endblock %}

@@ -29,6 +29,10 @@ from app.analytics.league_strikeouts import (
     supports_league_wide_strikeout_average,
 )
 from app.analytics.team_hitting import DEFAULT_ROLLING_WINDOW, build_team_hits_analysis
+from app.analytics.team_hitting_comparison import (
+    InvalidComparisonBaselineError,
+    build_team_hitting_comparison_analysis,
+)
 from app.analytics.team_runs import build_team_runs_analysis
 from app.analytics.team_strikeouts import (
     MissingStrikeoutDataError,
@@ -52,9 +56,11 @@ from app.schemas.analytics import (
     TeamStrikeoutsLeagueComparison,
 )
 from app.web.charts import (
+    COMPARISON_CHART_DIV_ID,
     RUNS_CHART_DIV_ID,
     STRIKEOUTS_CHART_DIV_ID,
     build_team_hits_figure,
+    build_team_hitting_comparison_figure,
     build_team_runs_figure,
     build_team_strikeouts_figure,
     plotly_bundle_javascript,
@@ -63,6 +69,7 @@ from app.web.charts import (
 )
 from app.web.dependencies import get_db_session
 from app.web.formatting import (
+    build_hitting_comparison_summary_cards,
     build_runs_summary_cards,
     build_strikeout_summary_cards,
     build_summary_cards,
@@ -73,6 +80,7 @@ from app.web.formatting import (
     format_long_date,
 )
 from app.web.navigation import (
+    COMPARISON_PATH,
     HITS_PATH,
     RUNS_PATH,
     STRIKEOUTS_PATH,
@@ -494,6 +502,190 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             request=request, name="runs.html", context=context
         )
 
+    @router.get(COMPARISON_PATH, response_class=HTMLResponse)
+    def hitting_comparison(
+        request: Request,
+        session: Annotated[Session, Depends(get_db_session)],
+        team_id: Annotated[
+            int | None,
+            Query(gt=0, description="MLB team id that has been imported locally."),
+        ] = None,
+        season: Annotated[
+            int | None,
+            Query(gt=0, description="Season that has been imported for the team."),
+        ] = None,
+        window: Annotated[
+            RollingWindowParam,
+            Query(description="Games in the trailing rolling average."),
+        ] = DEFAULT_ROLLING_WINDOW,
+    ) -> Response:
+        """Render normalized rolling Hits/Game and batting K/Game trends."""
+        try:
+            available = list_available_team_seasons(session)
+        except DatabaseSchemaMissingError as exc:
+            return _render_schema_error(templates, request, settings, exc)
+
+        teams = build_team_options(available)
+        context: dict[str, Any] = {
+            "app_name": settings.app_name,
+            "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
+            "window_options": ROLLING_WINDOW_OPTIONS,
+            "selected_window": window,
+            "selected_team": None,
+            "selected_season": None,
+            "import_command": IMPORT_COMMAND,
+            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
+            "form_action": COMPARISON_PATH,
+            "nav_links": build_nav_links(
+                current_path=COMPARISON_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
+        }
+
+        if not teams:
+            context["state"] = "empty"
+            return templates.TemplateResponse(
+                request=request, name="comparison.html", context=context
+            )
+
+        selected_team = select_team(teams, team_id)
+        if selected_team is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No games are stored for team id {team_id}. "
+                "Pick a team that has been imported, or import that team."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="comparison.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_team"] = selected_team
+        selected_season = select_season(selected_team, season)
+        if selected_season is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No {season} games are stored for {selected_team.team_name}. "
+                f"Stored seasons: "
+                f"{', '.join(str(value) for value in selected_team.seasons)}."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="comparison.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=COMPARISON_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
+        games = list_team_season(
+            session, team_id=selected_team.team_id, season=selected_season
+        )
+        hits_analysis = build_team_hits_analysis(games, rolling_window=window)
+        try:
+            strikeouts_analysis = build_team_strikeouts_analysis(
+                games, rolling_window=window
+            )
+        except MissingStrikeoutDataError as exc:
+            return _render_comparison_unavailable(
+                templates,
+                request,
+                context,
+                message=(
+                    f"{exc.games_missing} of the {exc.games_total} stored games for "
+                    f"{selected_team.team_name} in {selected_season} have no batting "
+                    "strikeout total. Their real values are unknown, so no "
+                    "normalized indexes were calculated. Re-import this "
+                    "team-season to backfill them."
+                ),
+                command=import_command_for(selected_team.team_id, selected_season),
+            )
+
+        coverage = get_league_season_ingestion(session, season=selected_season)
+        if not (
+            supports_league_wide_average(coverage)
+            and supports_league_wide_strikeout_average(coverage)
+        ):
+            return _render_comparison_unavailable(
+                templates,
+                request,
+                context,
+                message=(
+                    "The latest league-season import must have COMPLETE coverage "
+                    "before MLB Hits/Game and batting K/Game can be used as "
+                    "baselines. No normalized indexes were calculated."
+                ),
+            )
+
+        league_games = list_league_season(session, season=selected_season)
+        league_hits = build_league_hits_context(league_games)
+        try:
+            league_strikeouts = build_league_strikeouts_context(league_games)
+        except MissingLeagueStrikeoutDataError as exc:
+            return _render_comparison_unavailable(
+                templates,
+                request,
+                context,
+                message=(
+                    f"{exc.records_missing} of the {exc.records_total} team-game "
+                    f"records stored for {exc.season} have no batting strikeout "
+                    "total. Unknown totals are not treated as zero, so no "
+                    "normalized indexes were calculated. Re-import the league "
+                    "season to backfill them."
+                ),
+                command=league_import_command_for(selected_season),
+            )
+
+        try:
+            analysis = build_team_hitting_comparison_analysis(
+                hits_analysis,
+                strikeouts_analysis,
+                league_hits,
+                league_strikeouts,
+            )
+        except InvalidComparisonBaselineError:
+            return _render_comparison_unavailable(
+                templates,
+                request,
+                context,
+                message=(
+                    "Normalized indexes require positive MLB Hits/Game and batting "
+                    "K/Game baselines. At least one stored baseline is zero, so no "
+                    "normalized indexes were calculated."
+                ),
+            )
+
+        figure = build_team_hitting_comparison_figure(analysis)
+        context.update(
+            {
+                "state": "ok",
+                "analysis": analysis,
+                "chart_html": render_figure_html(
+                    figure, div_id=COMPARISON_CHART_DIV_ID
+                ),
+                "summary_cards": build_hitting_comparison_summary_cards(analysis),
+                "mlb_hits_per_game": f"{analysis.mlb_hits_per_game:.2f}",
+                "mlb_strikeouts_per_game": (f"{analysis.mlb_strikeouts_per_game:.2f}"),
+                "league_team_game_records": f"{league_hits.team_game_records:,}",
+                "data_through": format_long_date(analysis.last_game_date),
+            }
+        )
+        return templates.TemplateResponse(
+            request=request, name="comparison.html", context=context
+        )
+
     @router.get(PLOTLY_BUNDLE_PATH, include_in_schema=False)
     def plotly_bundle() -> Response:
         """Serve the plotly.js bundle from the installed package.
@@ -597,6 +789,27 @@ def _load_league_runs_comparison(
     league_games = list_league_season(session, season=analysis.season)
     league = build_league_runs_context(league_games)
     return compare_team_runs_to_league(analysis, league)
+
+
+def _render_comparison_unavailable(
+    templates: Jinja2Templates,
+    request: Request,
+    context: dict[str, Any],
+    *,
+    message: str,
+    command: str | None = None,
+) -> Response:
+    """Keep selectors and navigation usable while withholding unsupported values."""
+    context.update(
+        {
+            "state": "unavailable",
+            "unavailable_message": message,
+            "unavailable_command": command,
+        }
+    )
+    return templates.TemplateResponse(
+        request=request, name="comparison.html", context=context
+    )
 
 
 def _render_schema_error(

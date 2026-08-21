@@ -92,6 +92,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+  max-width: 100%;
 }
 
 .site-nav__link {
@@ -305,6 +306,13 @@ body {
 
 .chart-card__figure .plotly-graph-div {
   min-width: 27rem;
+}
+
+/* The normalized chart is intentionally composed for a phone-sized plot. Its
+   three aggregate traces stay legible without forcing the internal horizontal
+   scroller used by the denser game-level charts. */
+.chart-card__figure--comparison .plotly-graph-div {
+  min-width: 0;
 }
 
 /* Summary cards */
@@ -528,6 +536,22 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* The comparison values are compact indexes. Keeping them in a two-by-two
+     grid preserves the reference layout's visual hierarchy on a phone without
+     making any card too narrow to read. */
+  .summary--comparison {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .summary--comparison .summary-card {
+    padding: 0.95rem 1rem 1rem;
+  }
+
+  .summary--comparison .summary-card__label {
+    min-height: 2.45em;
+  }
+
   .summary-card__value {
     font-size: 1.9rem;
   }
@@ -546,5 +570,20 @@ body {
   .about,
   .notice {
     padding: 1.05rem 1.1rem;
+  }
+
+  .chart-card--comparison {
+    padding-right: 0.85rem;
+    padding-left: 0.85rem;
+  }
+}
+
+@media (max-width: 22rem) {
+  .summary--comparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .summary--comparison .summary-card__label {
+    min-height: 0;
   }
 }

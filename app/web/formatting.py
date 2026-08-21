@@ -6,6 +6,7 @@ from datetime import date
 from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
+    TeamHittingComparisonAnalysis,
     TeamRunsAnalysis,
     TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
@@ -16,6 +17,7 @@ from app.schemas.games import HomeAway
 HITS_PER_GAME_CAPTION = "Hits per Game"
 STRIKEOUTS_PER_GAME_CAPTION = "Batting Strikeouts per Game"
 RUNS_PER_GAME_CAPTION = "Runs Scored per Game"
+NORMALIZED_INDEX_CAPTION = "MLB Avg = 100"
 NO_LEAGUE_COMPARISON_VALUE = "—"
 NO_LEAGUE_COMPARISON_CAPTION = "Comparison unavailable"
 LEAGUE_COMPARISON_UNAVAILABLE_NOTE = (
@@ -74,6 +76,50 @@ class SummaryCard:
     label: str
     value: str
     caption: str
+
+
+def _format_normalized_index(value: float, *, signed: bool = False) -> str:
+    """Format an index to one decimal, omitting a redundant trailing zero.
+
+    The analytics model keeps full precision. Index cards are larger-scale
+    glance values, so ``108.0`` reads as ``108`` while a meaningful fractional
+    point such as ``108.4`` remains visible. A signed zero is a real result for
+    the gap and stays distinct from the unavailable state, which is rendered by
+    the route before cards are built.
+    """
+    if signed and abs(value) < 0.05:
+        value = 0.0
+    rendered = f"{value:+.1f}" if signed else f"{value:.1f}"
+    return rendered.removesuffix(".0")
+
+
+def build_hitting_comparison_summary_cards(
+    analysis: TeamHittingComparisonAnalysis,
+) -> list[SummaryCard]:
+    """Build the four normalized-comparison cards without judging direction."""
+    summary = analysis.summary
+    return [
+        SummaryCard(
+            label="Recent Hits Index",
+            value=_format_normalized_index(summary.recent_hits_index),
+            caption=NORMALIZED_INDEX_CAPTION,
+        ),
+        SummaryCard(
+            label="Recent K Index",
+            value=_format_normalized_index(summary.recent_strikeouts_index),
+            caption=NORMALIZED_INDEX_CAPTION,
+        ),
+        SummaryCard(
+            label="Trend Gap",
+            value=_format_normalized_index(summary.trend_gap, signed=True),
+            caption="Hits Index − K Index",
+        ),
+        SummaryCard(
+            label="Games Played",
+            value=str(summary.games_played),
+            caption="Completed Games",
+        ),
+    ]
 
 
 def build_summary_cards(

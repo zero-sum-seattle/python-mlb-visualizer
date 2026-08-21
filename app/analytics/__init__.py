@@ -5,6 +5,11 @@ from app.analytics.team_hitting import (
     TeamHitsAnalysisError,
     build_team_hits_analysis,
 )
+from app.analytics.team_hitting_comparison import (
+    InvalidComparisonBaselineError,
+    TeamHittingComparisonError,
+    build_team_hitting_comparison_analysis,
+)
 from app.analytics.team_runs import (
     TeamRunsAnalysisError,
     build_team_runs_analysis,
@@ -17,11 +22,14 @@ from app.analytics.team_strikeouts import (
 
 __all__ = [
     "DEFAULT_ROLLING_WINDOW",
+    "InvalidComparisonBaselineError",
     "MissingStrikeoutDataError",
     "TeamHitsAnalysisError",
+    "TeamHittingComparisonError",
     "TeamRunsAnalysisError",
     "TeamStrikeoutsAnalysisError",
     "build_team_hits_analysis",
+    "build_team_hitting_comparison_analysis",
     "build_team_runs_analysis",
     "build_team_strikeouts_analysis",
 ]
