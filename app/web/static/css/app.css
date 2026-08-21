@@ -66,11 +66,20 @@ body {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   color: #ffffff;
   font-size: 1.3rem;
   font-weight: 700;
   letter-spacing: -0.01em;
   text-decoration: none;
+}
+
+.brand__logo {
+  display: block;
+  width: 34px;
+  height: 34px;
 }
 
 .brand:hover {
@@ -141,6 +150,13 @@ body {
   font-size: 1.02rem;
 }
 
+/* A decorative logo that failed to load is hidden by script. This beats the
+   display rules the individual logos set, which would otherwise win against
+   the browser's own `[hidden]` rule. */
+.js-logo[hidden] {
+  display: none;
+}
+
 .card {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -179,6 +195,33 @@ body {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);
+}
+
+/* The club logo sits inside the select box, so the control reads as one
+   field rather than an image parked next to a dropdown. */
+.control__field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.control__logo {
+  position: absolute;
+  top: 50%;
+  left: 0.7rem;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.control__field select {
+  padding-left: 2.6rem;
+}
+
+/* A logo that failed to load is hidden, and the field closes the gap it left. */
+.control__logo[hidden] + select {
+  padding-left: 0.8rem;
 }
 
 .control select {

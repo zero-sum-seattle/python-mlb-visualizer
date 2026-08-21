@@ -276,6 +276,16 @@ def test_the_navigation_sits_inside_the_single_header_bar(
     assert "Batting Strikeouts</a>" in header
 
 
+def test_the_selector_shows_the_club_logo_for_the_selected_team(
+    client: TestClient, seed: SeedFn
+) -> None:
+    """Decorative only: the select still names the team in text."""
+    seed(hits=[7] * 20)
+    body = client.get("/?team_id=136&season=2025").text
+    assert "team-logos/136.svg" in body
+    assert 'alt=""' in body
+
+
 def test_the_selectors_keep_their_labels_and_ids(
     client: TestClient, seed: SeedFn
 ) -> None:

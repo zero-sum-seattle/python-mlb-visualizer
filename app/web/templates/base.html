@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}{{ app_name }}{% endblock %}</title>
     <link rel="stylesheet" href="/static/css/app.css" />
+    <script src="/static/js/logos.js" defer></script>
     {% block head %}{% endblock %}
   </head>
   <body>
@@ -13,7 +14,11 @@
        actually has, so it fills the space rather than a second stacked bar. #}
     <header class="site-header">
       <div class="shell site-header__inner">
-        <a class="brand" href="/">MLB Stats Visualizer</a>
+        <a class="brand" href="/">
+          {# Decorative: the wordmark beside it already names the application. #}
+          <img class="brand__logo js-logo" src="{{ mlb_logo_url }}" alt="" width="34" height="34" />
+          MLB Stats Visualizer
+        </a>
         {% if nav_links %}
           <nav class="site-nav" aria-label="Metrics">
             {%- for link in nav_links %}

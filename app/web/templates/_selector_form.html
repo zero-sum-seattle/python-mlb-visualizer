@@ -7,12 +7,23 @@
   <div class="controls__fields">
     <div class="control">
       <label for="team_id">Team</label>
-      <select id="team_id" name="team_id">
-        {%- for team in teams %}
-          {%- set is_selected = selected_team and team.team_id == selected_team.team_id %}
-          <option value="{{ team.team_id }}"{% if is_selected %} selected{% endif %}>{{ team.team_name }}</option>
-        {%- endfor %}
-      </select>
+      {# The logo is decorative: the select itself names the team, and it is
+         hidden when the image cannot load so no broken icon is left behind. #}
+      <div class="control__field">
+        <img class="control__logo js-logo"
+             id="team-logo"
+             data-url-prefix="{{ team_logo_url_prefix }}"
+             src="{{ team_logo_url_prefix }}{{ (selected_team.team_id if selected_team else teams[0].team_id) }}.svg"
+             alt=""
+             width="22"
+             height="22" />
+        <select id="team_id" name="team_id">
+          {%- for team in teams %}
+            {%- set is_selected = selected_team and team.team_id == selected_team.team_id %}
+            <option value="{{ team.team_id }}"{% if is_selected %} selected{% endif %}>{{ team.team_name }}</option>
+          {%- endfor %}
+        </select>
+      </div>
     </div>
 
     <div class="control">
