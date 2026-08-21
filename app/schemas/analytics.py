@@ -306,3 +306,107 @@ class TeamHitsLeagueComparison(BaseModel):
                 f"team_hits_per_game - league.hits_per_game ({expected})"
             )
         return self
+
+
+class LeagueStrikeoutsContext(BaseModel):
+    """MLB-wide batting strikeout context for one season.
+
+    Built from every persisted team-game batting line for the season, so
+    ``strikeouts_per_game`` is a game-weighted mean across team-game records
+    rather than the unweighted mean of each club's own average. Teams do not
+    all play the same number of games, so those two numbers are not the same
+    statistic.
+
+    Every counted record carries a known batting strikeout total. A season
+    holding even one record with an unknown total cannot produce this context
+    at all, because an average over the rows that happen to have a value is not
+    an MLB-wide average.
+
+    Every field describes the games **currently stored** for the season. For a
+    season still being played that is the completed games held by the most
+    recent complete league-wide refresh, not a whole season.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    season: int = Field(gt=0, description="Season the context describes.")
+    teams_represented: int = Field(
+        ge=1,
+        description="Distinct teams with at least one stored game in the season.",
+    )
+    team_game_records: int = Field(
+        ge=1,
+        description="Team-game batting lines counted. One MLB game contributes "
+        "two records once both clubs are stored, so this is not a game count.",
+    )
+    total_strikeouts: int = Field(
+        ge=0,
+        description="Batting strikeouts summed across every counted team-game "
+        "record. Never includes a substituted value for an unknown total.",
+    )
+    strikeouts_per_game: float = Field(
+        ge=0,
+        description="total_strikeouts / team_game_records.",
+    )
+
+    @model_validator(mode="after")
+    def _strikeouts_per_game_matches_the_totals(self) -> LeagueStrikeoutsContext:
+        expected = self.total_strikeouts / self.team_game_records
+        if not isclose(self.strikeouts_per_game, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"strikeouts_per_game ({self.strikeouts_per_game}) must equal "
+                f"total_strikeouts / team_game_records ({expected})"
+            )
+        if self.teams_represented > self.team_game_records:
+            raise ValueError(
+                f"teams_represented ({self.teams_represented}) cannot exceed "
+                f"team_game_records ({self.team_game_records})"
+            )
+        return self
+
+
+class TeamStrikeoutsLeagueComparison(BaseModel):
+    """One team's batting K/Game placed beside MLB overall for the same season.
+
+    Purely descriptive. A difference here says the selected team's hitters
+    struck out more or fewer times per game than MLB across the stored season;
+    it carries no claim of significance, and neither direction is labelled good
+    or bad. Striking out less often is not automatically better hitting, and a
+    club that strikes out more may be doing other things well.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id of the selected team.")
+    team_name: str = Field(min_length=1, description="Name for the season.")
+    season: int = Field(gt=0, description="Season compared.")
+    team_strikeouts_per_game: float = Field(
+        ge=0,
+        description="The selected team's average across its stored games, taken "
+        "from TeamStrikeoutsSummary.season_average so the page cannot disagree "
+        "with itself.",
+    )
+    league: LeagueStrikeoutsContext = Field(
+        description="MLB-wide context compared against."
+    )
+    difference_vs_mlb: float = Field(
+        description="team_strikeouts_per_game - league.strikeouts_per_game. "
+        "Positive means the team's hitters struck out more times per game than "
+        "MLB overall, negative fewer.",
+    )
+
+    @model_validator(mode="after")
+    def _comparison_is_internally_consistent(self) -> TeamStrikeoutsLeagueComparison:
+        if self.season != self.league.season:
+            raise ValueError(
+                f"season ({self.season}) must match the league context season "
+                f"({self.league.season})"
+            )
+        expected = self.team_strikeouts_per_game - self.league.strikeouts_per_game
+        if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"difference_vs_mlb ({self.difference_vs_mlb}) must equal "
+                f"team_strikeouts_per_game - league.strikeouts_per_game "
+                f"({expected})"
+            )
+        return self
