@@ -4,7 +4,11 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from typing import Any
 
-from app.schemas.analytics import LeagueHitsContext, LeagueStrikeoutsContext
+from app.schemas.analytics import (
+    LeagueHitsContext,
+    LeagueRunsContext,
+    LeagueStrikeoutsContext,
+)
 from app.schemas.games import TeamGameBattingLine
 
 MARINERS_ID = 136
@@ -47,6 +51,7 @@ def make_season(
     season: int = 2025,
     start_date: date | None = None,
     strikeouts: Sequence[int | None] | None = None,
+    runs: Sequence[int] | None = None,
 ) -> list[TeamGameBattingLine]:
     """Build one game per hit total, on consecutive days, in season order.
 
@@ -56,11 +61,17 @@ def make_season(
     ``strikeouts`` defaults to None for every game, which is what a row
     persisted before Milestone 3.5 looks like. Pass one value per game to build
     a team-season that has been imported with batting strikeouts.
+
+    ``runs`` defaults to the batting line's own run total for every game.
+    Unlike strikeouts there is no unset case to model: ``runs`` is required on
+    every persisted record. Pass one value per game to choose the totals.
     """
     if strikeouts is not None and len(strikeouts) != len(hits):
         raise ValueError(
             f"strikeouts has {len(strikeouts)} values but hits has {len(hits)}"
         )
+    if runs is not None and len(runs) != len(hits):
+        raise ValueError(f"runs has {len(runs)} values but hits has {len(hits)}")
     opening_day = start_date or date(season, OPENING_DAY.month, OPENING_DAY.day)
     return [
         make_batting_line(
@@ -72,6 +83,7 @@ def make_season(
             home_away="home" if index % 2 == 0 else "away",
             hits=value,
             strikeouts=None if strikeouts is None else strikeouts[index],
+            **({} if runs is None else {"runs": runs[index]}),
         )
         for index, value in enumerate(hits)
     ]
@@ -118,4 +130,26 @@ def make_league_strikeouts_context(
         team_game_records=team_game_records,
         total_strikeouts=total_strikeouts,
         strikeouts_per_game=total_strikeouts / team_game_records,
+    )
+
+
+def make_league_runs_context(
+    *,
+    season: int = 2025,
+    total_runs: int = 45,
+    team_game_records: int = 10,
+    teams_represented: int = 2,
+) -> LeagueRunsContext:
+    """Build MLB-wide run context directly, for tests about presentation.
+
+    Tests of the formula itself build the context from batting lines through
+    ``build_league_runs_context``. Tests about cards, traces, and wording only
+    need a context holding a chosen average, so they build one here.
+    """
+    return LeagueRunsContext(
+        season=season,
+        teams_represented=teams_represented,
+        team_game_records=team_game_records,
+        total_runs=total_runs,
+        runs_per_game=total_runs / team_game_records,
     )

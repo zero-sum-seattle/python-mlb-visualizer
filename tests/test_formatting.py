@@ -5,15 +5,20 @@ from datetime import date
 import pytest
 
 from app.analytics.league_hitting import compare_team_hits_to_league
+from app.analytics.league_runs import compare_team_runs_to_league
 from app.analytics.league_strikeouts import compare_team_strikeouts_to_league
 from app.analytics.team_hitting import build_team_hits_analysis
+from app.analytics.team_runs import build_team_runs_analysis
 from app.analytics.team_strikeouts import build_team_strikeouts_analysis
 from app.web.formatting import (
     LEAGUE_COMPARISON_UNAVAILABLE_NOTE,
+    LEAGUE_RUNS_UNAVAILABLE_NOTE,
     LEAGUE_STRIKEOUTS_UNAVAILABLE_NOTE,
+    build_runs_summary_cards,
     build_strikeout_summary_cards,
     build_summary_cards,
     format_league_comparison_note,
+    format_league_runs_note,
     format_league_strikeouts_backfill_note,
     format_league_strikeouts_note,
     format_long_date,
@@ -22,6 +27,7 @@ from app.web.formatting import (
 )
 from tests.factories import (
     make_league_hits_context,
+    make_league_runs_context,
     make_league_strikeouts_context,
     make_season,
 )
@@ -262,3 +268,104 @@ def test_strikeout_games_played_counts_completed_games() -> None:
 def test_short_date_drops_the_year_for_axis_ticks() -> None:
     assert format_short_date(date(2025, 5, 8)) == "May 8"
     assert format_short_date(date(2025, 9, 28)) == "Sep 28"
+
+
+def runs_comparison(runs: list[int], *, window: int, mlb_runs_per_game: float):
+    """Build a team runs analysis and an MLB comparison against a chosen average."""
+    analysis = build_team_runs_analysis(
+        make_season(hits=[8] * len(runs), runs=runs), rolling_window=window
+    )
+    league = make_league_runs_context(
+        total_runs=round(mlb_runs_per_game * 100), team_game_records=100
+    )
+    return analysis, compare_team_runs_to_league(analysis, league)
+
+
+def test_runs_cards_use_the_same_four_labels_as_the_other_pages() -> None:
+    analysis, comparison = runs_comparison([4] * 40, window=10, mlb_runs_per_game=4.42)
+    cards = build_runs_summary_cards(analysis, comparison)
+    assert [card.label for card in cards] == [
+        "Recent 10-Game Avg",
+        "Season Avg",
+        "vs MLB",
+        "Games Played",
+    ]
+
+
+def test_runs_cards_are_captioned_as_runs_scored() -> None:
+    analysis, comparison = runs_comparison([4] * 20, window=5, mlb_runs_per_game=4.0)
+    cards = build_runs_summary_cards(analysis, comparison)
+    assert cards[0].caption == "Runs Scored per Game"
+    assert cards[1].caption == "Runs Scored per Game"
+    assert cards[2].caption == "Runs Scored per Game"
+    assert cards[3].caption == "Completed Games"
+
+
+def test_runs_cards_round_for_display_only() -> None:
+    analysis = build_team_runs_analysis(
+        make_season(hits=[8] * 10, runs=[3] * 5 + [6] * 5), rolling_window=5
+    )
+    cards = build_runs_summary_cards(analysis)
+    assert cards[0].value == "6.00"
+    assert cards[1].value == "4.50"
+    assert cards[3].value == "10"
+
+
+def test_scoring_more_than_mlb_reads_as_a_positive_number() -> None:
+    """The worked example from issue #24: 4.75 against 4.42 reads +0.33."""
+    analysis, comparison = runs_comparison(
+        [5, 5, 5, 4], window=4, mlb_runs_per_game=4.42
+    )
+    card = build_runs_summary_cards(analysis, comparison)[2]
+    assert card.value == "+0.33"
+
+
+def test_scoring_less_than_mlb_reads_as_a_negative_number() -> None:
+    analysis, comparison = runs_comparison([4] * 4, window=4, mlb_runs_per_game=4.42)
+    assert build_runs_summary_cards(analysis, comparison)[2].value == "-0.42"
+
+
+def test_matching_mlb_exactly_reads_as_a_signed_zero() -> None:
+    """+0.00 is a real result and must stay distinct from unavailable."""
+    analysis, comparison = runs_comparison([4] * 4, window=4, mlb_runs_per_game=4.0)
+    assert build_runs_summary_cards(analysis, comparison)[2].value == "+0.00"
+
+
+def test_runs_league_card_says_when_no_mlb_average_is_available() -> None:
+    """Without complete league coverage the card must not invent a number."""
+    analysis = build_team_runs_analysis(
+        make_season(hits=[8] * 9, runs=[4] * 9), rolling_window=5
+    )
+    card = build_runs_summary_cards(analysis)[2]
+    assert card.value == "—"
+    assert card.caption == "Comparison unavailable"
+    assert card.value != "0.00"
+
+
+def test_runs_league_note_explains_why_a_comparison_is_missing() -> None:
+    note = format_league_runs_note(None)
+    assert note == LEAGUE_RUNS_UNAVAILABLE_NOTE
+    assert "complete league-season import" in note
+
+
+def test_runs_league_note_reports_the_average_and_what_it_covers() -> None:
+    _, available = runs_comparison([5] * 10, window=5, mlb_runs_per_game=4.42)
+    note = format_league_runs_note(available)
+    assert "scored 4.42 runs per game" in note
+    assert "100 team-game records" in note
+    assert "currently stored" in note
+    assert "total runs divided by total team-game records" in note
+
+
+def test_runs_league_note_does_not_call_the_season_finished() -> None:
+    _, available = runs_comparison([5] * 10, window=5, mlb_runs_per_game=4.42)
+    note = format_league_runs_note(available)
+    assert "finished being played" in note
+    assert "season complete" not in note.lower()
+
+
+def test_runs_games_played_counts_completed_games() -> None:
+    analysis = build_team_runs_analysis(
+        make_season(hits=[8] * 12, runs=[4] * 12), rolling_window=5
+    )
+    assert build_runs_summary_cards(analysis)[3].value == "12"

@@ -6,6 +6,8 @@ from datetime import date
 from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
+    TeamRunsAnalysis,
+    TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
     TeamStrikeoutsLeagueComparison,
 )
@@ -13,6 +15,7 @@ from app.schemas.games import HomeAway
 
 HITS_PER_GAME_CAPTION = "Hits per Game"
 STRIKEOUTS_PER_GAME_CAPTION = "Batting Strikeouts per Game"
+RUNS_PER_GAME_CAPTION = "Runs Scored per Game"
 NO_LEAGUE_COMPARISON_VALUE = "—"
 NO_LEAGUE_COMPARISON_CAPTION = "Comparison unavailable"
 LEAGUE_COMPARISON_UNAVAILABLE_NOTE = (
@@ -22,6 +25,10 @@ LEAGUE_COMPARISON_UNAVAILABLE_NOTE = (
 LEAGUE_STRIKEOUTS_UNAVAILABLE_NOTE = (
     "MLB comparison unavailable. A complete league-season import is required "
     "before an MLB-wide batting strikeout average can be shown."
+)
+LEAGUE_RUNS_UNAVAILABLE_NOTE = (
+    "MLB comparison unavailable. A complete league-season import is required "
+    "before an MLB-wide runs-per-game average can be shown."
 )
 
 _MONTHS = (
@@ -254,4 +261,81 @@ def format_league_strikeouts_backfill_note(
         f"strikeouts were persisted. They are not counted as zero and the rest "
         f"are not presented as MLB overall. Re-import the league season to "
         f"backfill them: {reimport_command}"
+    )
+
+
+def build_runs_summary_cards(
+    analysis: TeamRunsAnalysis,
+    league_comparison: TeamRunsLeagueComparison | None = None,
+) -> list[SummaryCard]:
+    """Round the analysis for display only; the calculations keep full precision.
+
+    The same four cards the hits and batting strikeout pages show. The third is
+    the team's difference against MLB. Without complete league coverage for the
+    season there is no MLB average to compare with, so the card reads ``—``
+    rather than showing a number the data cannot support. It never reads
+    ``0.00``, which is a real value meaning the team matched MLB exactly.
+
+    ``TeamRunsSummary`` still calculates the prior-window comparison; it is not
+    given a card, so the row keeps four cards rather than growing a fifth.
+    """
+    window = analysis.rolling_window
+    summary = analysis.summary
+
+    if league_comparison is None:
+        league_card = SummaryCard(
+            label="vs MLB",
+            value=NO_LEAGUE_COMPARISON_VALUE,
+            caption=NO_LEAGUE_COMPARISON_CAPTION,
+        )
+    else:
+        league_card = SummaryCard(
+            label="vs MLB",
+            value=f"{league_comparison.difference_vs_mlb:+.2f}",
+            caption=RUNS_PER_GAME_CAPTION,
+        )
+
+    return [
+        SummaryCard(
+            label=f"Recent {window}-Game Avg",
+            value=f"{summary.recent_average:.2f}",
+            caption=RUNS_PER_GAME_CAPTION,
+        ),
+        SummaryCard(
+            label="Season Avg",
+            value=f"{summary.season_average:.2f}",
+            caption=RUNS_PER_GAME_CAPTION,
+        ),
+        league_card,
+        SummaryCard(
+            label="Games Played",
+            value=f"{summary.games_played}",
+            caption="Completed Games",
+        ),
+    ]
+
+
+def format_league_runs_note(
+    comparison: TeamRunsLeagueComparison | None,
+) -> str:
+    """Explain the MLB run-scoring context on the page, or why there is none.
+
+    The available wording deliberately says "currently stored" and names the
+    number of team-game records behind the average. Complete league coverage
+    means every team was refreshed, not that the season has finished being
+    played, and the sentence must not let a reader conclude otherwise.
+
+    It also says "scored" so a per-game run number is not read as runs allowed.
+    """
+    if comparison is None:
+        return LEAGUE_RUNS_UNAVAILABLE_NOTE
+
+    league = comparison.league
+    return (
+        f"MLB teams scored {league.runs_per_game:.2f} runs per game across the "
+        f"{league.team_game_records:,} team-game records currently stored for "
+        f"{league.season}, covering {league.teams_represented} teams — total "
+        f"runs divided by total team-game records, so a club that has played "
+        f"more games counts for more. Complete league coverage means every "
+        f"team was refreshed, not that the season has finished being played."
     )

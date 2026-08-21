@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Run Scoring Trends
+  {%- else -%}
+    Team Run Scoring Trends
+  {%- endif -%}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Team Run Scoring Trends</h1>
+    <p class="page-intro__subtitle">
+      See how many runs a team is scoring per game as the season progresses.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    {% include "_selector_form.html" %}
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% else %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} — Runs Scored per Game</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure">{{ chart_html | safe }}</div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            Each point is the number of runs {{ analysis.team_name }} scored in
+            one completed game. These are runs scored, not runs allowed, and
+            nothing here is a run differential. The
+            {{ rolling_average_label|lower }} covers that game and the
+            {{ analysis.rolling_window - 1 }} games before it, so it shows the
+            recent scoring trend; early-season points use every game played so
+            far. The dashed line is the team's average across the completed
+            games currently stored for this season.
+          </p>
+          <p>
+            {% if league_comparison %}
+              The dotted line is MLB overall.
+            {% endif %}
+            {{ league_comparison_note }}
+            {% if league_comparison %}
+              A positive <strong>vs MLB</strong> value means
+              {{ analysis.team_name }} scored more runs per game than MLB
+              across the stored season, and a negative value fewer. It is
+              descriptive context, not a measure of significance, and it makes
+              no claim about why the two numbers differ.
+            {% endif %}
+          </p>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <span>Data through {{ data_through }}</span>
+  {% endif %}
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
+{% endblock %}
