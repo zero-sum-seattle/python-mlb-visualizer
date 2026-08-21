@@ -286,8 +286,11 @@ poetry run python scripts/import_league_season.py --season 2025
 
 ## 9. Limitations
 
-- The comparison covers hits only. Batting strikeouts have no league context in
-  this milestone.
+- The comparison covers hits only. Batting strikeouts had no league context in
+  this milestone; issue #23 added their own, documented in
+  `docs/team-strikeouts-visualization.md` section 13. That work also renamed the
+  strikeout chart's team reference line to `Team Season Average`, so section 6's
+  note about the shorter label describes Milestone 5 only.
 - `teams_represented` counts clubs with stored games for the season. Under
   complete coverage that is the league; it is reported for transparency, not
   used as a completeness rule.

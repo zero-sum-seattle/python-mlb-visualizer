@@ -2,18 +2,20 @@
 
 import pytest
 
+from app.analytics.league_strikeouts import compare_team_strikeouts_to_league
 from app.analytics.team_strikeouts import build_team_strikeouts_analysis
 from app.web.charts import (
+    MLB_AVERAGE_TRACE_NAME,
     RAW_STRIKEOUTS_TRACE_NAME,
-    SEASON_AVERAGE_TRACE_NAME,
     STRIKEOUTS_CHART_DIV_ID,
     STRIKEOUTS_Y_AXIS_TITLE,
+    TEAM_SEASON_AVERAGE_TRACE_NAME,
     X_AXIS_TITLE,
     build_team_strikeouts_figure,
     render_figure_html,
     rolling_average_trace_name,
 )
-from tests.factories import make_season
+from tests.factories import make_league_strikeouts_context, make_season
 
 VALUES = [10, 4, 14, 6, 11]
 
@@ -30,7 +32,18 @@ def figure():
     return build_team_strikeouts_figure(analysis_for(VALUES))
 
 
-def test_figure_has_three_traces(figure) -> None:
+@pytest.fixture
+def league_figure():
+    """A figure built with MLB context, as a trustworthy season gets."""
+    analysis = analysis_for(VALUES)
+    league = make_league_strikeouts_context(total_strikeouts=82, team_game_records=10)
+    return build_team_strikeouts_figure(
+        analysis, compare_team_strikeouts_to_league(analysis, league)
+    )
+
+
+def test_figure_has_three_traces_without_mlb_context(figure) -> None:
+    """No trustworthy league data means no MLB line, and a working chart."""
     assert len(figure.data) == 3
 
 
@@ -38,8 +51,60 @@ def test_trace_names_describe_the_three_series(figure) -> None:
     assert [trace.name for trace in figure.data] == [
         RAW_STRIKEOUTS_TRACE_NAME,
         "5-Game Average",
-        SEASON_AVERAGE_TRACE_NAME,
+        TEAM_SEASON_AVERAGE_TRACE_NAME,
     ]
+
+
+def test_mlb_context_adds_a_fourth_named_trace(league_figure) -> None:
+    assert [trace.name for trace in league_figure.data] == [
+        RAW_STRIKEOUTS_TRACE_NAME,
+        "5-Game Average",
+        TEAM_SEASON_AVERAGE_TRACE_NAME,
+        MLB_AVERAGE_TRACE_NAME,
+    ]
+
+
+def test_no_mlb_trace_without_a_comparison(figure) -> None:
+    assert MLB_AVERAGE_TRACE_NAME not in [trace.name for trace in figure.data]
+
+
+def test_the_mlb_trace_plots_the_league_average(league_figure) -> None:
+    assert list(league_figure.data[3].y) == pytest.approx([8.2, 8.2])
+
+
+def test_the_mlb_trace_spans_the_whole_season(league_figure) -> None:
+    assert list(league_figure.data[3].x) == [1, 5]
+
+
+def test_the_mlb_trace_is_dotted_so_the_two_reference_lines_differ(
+    league_figure,
+) -> None:
+    assert league_figure.data[3].line.dash == "dot"
+    assert league_figure.data[2].line.dash == "dash"
+    assert league_figure.data[3].line.color != league_figure.data[2].line.color
+
+
+def test_the_mlb_trace_has_no_hover(league_figure) -> None:
+    assert league_figure.data[3].hoverinfo == "skip"
+
+
+def test_mlb_context_does_not_change_the_existing_series(league_figure) -> None:
+    """The rolling average and the game values mean exactly what they did."""
+    assert list(league_figure.data[0].y) == VALUES
+    assert list(league_figure.data[1].y) == pytest.approx([10.0, 7.0, 28 / 3, 8.5, 9.0])
+    assert list(league_figure.data[2].y) == pytest.approx([9.0, 9.0])
+
+
+def test_no_trace_uses_spline_smoothing_with_mlb_context(league_figure) -> None:
+    assert all(trace.line.shape in (None, "linear") for trace in league_figure.data)
+
+
+def test_only_the_mlb_line_is_labelled_when_it_is_drawn(league_figure) -> None:
+    """Both lines can sit a tenth of a strikeout apart, where labels collide."""
+    annotations = league_figure.layout.annotations
+    assert len(annotations) == 1
+    assert MLB_AVERAGE_TRACE_NAME in annotations[0].text
+    assert "8.20" in annotations[0].text
 
 
 def test_raw_trace_is_labelled_as_strikeouts(figure) -> None:
@@ -74,6 +139,11 @@ def test_no_trace_uses_spline_smoothing(figure) -> None:
     assert all(trace.line.shape in (None, "linear") for trace in figure.data)
 
 
+def test_the_team_line_says_whose_average_it_is(figure) -> None:
+    """Two reference lines can share the chart, so "Season Average" is ambiguous."""
+    assert figure.data[2].name == "Team Season Average"
+
+
 def test_season_average_trace_is_the_stored_season_average(figure) -> None:
     expected = sum(VALUES) / len(VALUES)
     assert list(figure.data[2].y) == pytest.approx([expected, expected])
@@ -85,8 +155,9 @@ def test_season_average_trace_spans_the_whole_season(figure) -> None:
 
 def test_the_season_average_line_is_labelled_with_its_value(figure) -> None:
     annotation = figure.layout.annotations[0]
-    assert SEASON_AVERAGE_TRACE_NAME in annotation.text
+    assert TEAM_SEASON_AVERAGE_TRACE_NAME in annotation.text
     assert "9.00" in annotation.text
+    assert MLB_AVERAGE_TRACE_NAME not in annotation.text
 
 
 def test_x_axis_ticks_carry_the_game_date(figure) -> None:

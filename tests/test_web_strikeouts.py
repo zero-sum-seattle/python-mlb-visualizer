@@ -294,7 +294,7 @@ def test_backfilled_rows_make_the_chart_appear(
 def test_summary_cards_are_rendered(client: TestClient, seed: SeedFn) -> None:
     seed_with_strikeouts(seed, [10, 8, 12, 6])
     body = client.get("/strikeouts?window=5").text
-    for label in ("Season Avg", "vs Prior 5", "Games Played"):
+    for label in ("Recent 5-Game Avg", "Season Avg", "vs MLB", "Games Played"):
         assert label in body
 
 
@@ -307,11 +307,19 @@ def test_summary_cards_describe_stored_completed_games(
     assert "completed games currently stored" in body
 
 
-def test_insufficient_games_show_the_not_enough_games_caption(
+def test_without_league_coverage_the_mlb_card_is_unavailable(
     client: TestClient, seed: SeedFn
 ) -> None:
+    """Issue #23 replaced the prior-window card with the MLB comparison.
+
+    Nothing here records league coverage, so the card must read a dash rather
+    than a number. ``TeamStrikeoutsSummary`` still calculates the prior-window
+    change; only the card was replaced.
+    """
     seed_with_strikeouts(seed, [10, 8, 12])
-    assert "Not enough games" in client.get("/strikeouts?window=30").text
+    body = client.get("/strikeouts?window=30").text
+    assert "vs MLB" in body
+    assert "Comparison unavailable" in body
 
 
 def test_the_page_explains_that_k_per_game_is_not_a_rate(

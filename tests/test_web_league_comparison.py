@@ -338,17 +338,25 @@ def test_the_comparison_never_reaches_the_mlb_api(
     assert "MLB Average" in hits_page(client)
 
 
-def test_the_strikeouts_page_is_unaffected_by_league_coverage(
+def test_the_strikeouts_page_has_its_own_league_comparison(
     client: TestClient, seed: SeedFn, record_coverage: CoverageFn
 ) -> None:
-    """Milestone 5 adds no league context to batting strikeouts."""
-    seed([9] * 20, strikeouts=[8] * 20)
-    record_coverage(teams=1)
+    """Issue #23 gave batting strikeouts their own MLB context.
+
+    Milestone 5 deliberately left this page without one, and that is no longer
+    the intended behavior. The context it now shows is calculated from batting
+    strikeouts, never borrowed from the hits comparison, so the hits average
+    must not appear here.
+    """
+    seed([9] * 20, strikeouts=[9] * 20, team_id=MARINERS_ID, team_name=MARINERS_NAME)
+    seed([7] * 20, strikeouts=[7] * 20, team_id=TWINS_ID, team_name=TWINS_NAME)
+    record_coverage(teams=2)
     response = client.get(f"/strikeouts?team_id={MARINERS_ID}&season=2025")
     assert response.status_code == 200
 
     body = response.text
     assert "Game Strikeouts" in body
-    assert "vs Prior 15" in body
-    assert "MLB Average" not in body
-    assert "vs MLB" not in body
+    assert "vs MLB" in body
+    assert "MLB Average" in body
+    assert "struck out 8.00 times per game" in body
+    assert "8.00 hits per game" not in body

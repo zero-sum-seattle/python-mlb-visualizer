@@ -17,6 +17,12 @@ from app.analytics.league_hitting import (
     compare_team_hits_to_league,
     supports_league_wide_average,
 )
+from app.analytics.league_strikeouts import (
+    MissingLeagueStrikeoutDataError,
+    build_league_strikeouts_context,
+    compare_team_strikeouts_to_league,
+    supports_league_wide_strikeout_average,
+)
 from app.analytics.team_hitting import DEFAULT_ROLLING_WINDOW, build_team_hits_analysis
 from app.analytics.team_strikeouts import (
     MissingStrikeoutDataError,
@@ -31,7 +37,12 @@ from app.database.repositories import (
     list_league_season,
     list_team_season,
 )
-from app.schemas.analytics import TeamHitsAnalysis, TeamHitsLeagueComparison
+from app.schemas.analytics import (
+    TeamHitsAnalysis,
+    TeamHitsLeagueComparison,
+    TeamStrikeoutsAnalysis,
+    TeamStrikeoutsLeagueComparison,
+)
 from app.web.charts import (
     STRIKEOUTS_CHART_DIV_ID,
     build_team_hits_figure,
@@ -45,6 +56,8 @@ from app.web.formatting import (
     build_strikeout_summary_cards,
     build_summary_cards,
     format_league_comparison_note,
+    format_league_strikeouts_backfill_note,
+    format_league_strikeouts_note,
     format_long_date,
 )
 from app.web.navigation import HITS_PATH, STRIKEOUTS_PATH, build_nav_links
@@ -93,6 +106,11 @@ def import_command_for(team_id: int, season: int) -> str:
         f"poetry run python scripts/import_team_season.py "
         f"--team-id {team_id} --season {season}"
     )
+
+
+def league_import_command_for(season: int) -> str:
+    """Spell out the league-wide import command for the season selected."""
+    return f"poetry run python scripts/import_league_season.py --season {season}"
 
 
 def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
@@ -318,7 +336,22 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
                 status_code=409,
             )
 
-        figure = build_team_strikeouts_figure(analysis)
+        try:
+            league_comparison = _load_league_strikeouts_comparison(session, analysis)
+            league_note = format_league_strikeouts_note(league_comparison)
+        except MissingLeagueStrikeoutDataError as exc:
+            # Coverage is complete, but some stored league rows predate batting
+            # strikeouts being persisted. The selected team's own page still
+            # works; only the MLB-wide claim is withheld.
+            league_comparison = None
+            league_note = format_league_strikeouts_backfill_note(
+                season=exc.season,
+                records_missing=exc.records_missing,
+                records_total=exc.records_total,
+                reimport_command=league_import_command_for(selected_season),
+            )
+
+        figure = build_team_strikeouts_figure(analysis, league_comparison)
         context.update(
             {
                 "state": "ok",
@@ -327,7 +360,11 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
                     figure, div_id=STRIKEOUTS_CHART_DIV_ID
                 ),
                 "rolling_average_label": rolling_average_trace_name(window),
-                "summary_cards": build_strikeout_summary_cards(analysis),
+                "summary_cards": build_strikeout_summary_cards(
+                    analysis, league_comparison
+                ),
+                "league_comparison": league_comparison,
+                "league_comparison_note": league_note,
                 "data_through": format_long_date(analysis.last_game_date),
             }
         )
@@ -380,6 +417,36 @@ def _load_league_comparison(
     league_games = list_league_season(session, season=analysis.season)
     league = build_league_hits_context(league_games)
     return compare_team_hits_to_league(analysis, league)
+
+
+def _load_league_strikeouts_comparison(
+    session: Session,
+    analysis: TeamStrikeoutsAnalysis,
+) -> TeamStrikeoutsLeagueComparison | None:
+    """Read MLB batting strikeout context, or None when it is not earned.
+
+    Two conditions must hold, and both rules live in
+    ``app.analytics.league_strikeouts``: the season's latest league-wide
+    refresh reached ``COMPLETE`` coverage, and every stored record for the
+    season carries a known batting strikeout total. This only wires the
+    persisted coverage state and the persisted season to them.
+
+    A season without complete coverage yields None. A season whose stored rows
+    include an unknown strikeout total raises
+    ``MissingLeagueStrikeoutDataError``, which the route turns into backfill
+    guidance rather than a missing-coverage message, because the two are
+    different problems with different remedies.
+
+    The season query cannot come back empty here: the analysis was built from
+    games stored for this season, so those rows are part of what it returns.
+    """
+    coverage = get_league_season_ingestion(session, season=analysis.season)
+    if not supports_league_wide_strikeout_average(coverage):
+        return None
+
+    league_games = list_league_season(session, season=analysis.season)
+    league = build_league_strikeouts_context(league_games)
+    return compare_team_strikeouts_to_league(analysis, league)
 
 
 def _render_schema_error(

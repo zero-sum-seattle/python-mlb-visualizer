@@ -5,18 +5,26 @@ from datetime import date
 import pytest
 
 from app.analytics.league_hitting import compare_team_hits_to_league
+from app.analytics.league_strikeouts import compare_team_strikeouts_to_league
 from app.analytics.team_hitting import build_team_hits_analysis
 from app.analytics.team_strikeouts import build_team_strikeouts_analysis
 from app.web.formatting import (
     LEAGUE_COMPARISON_UNAVAILABLE_NOTE,
+    LEAGUE_STRIKEOUTS_UNAVAILABLE_NOTE,
     build_strikeout_summary_cards,
     build_summary_cards,
     format_league_comparison_note,
+    format_league_strikeouts_backfill_note,
+    format_league_strikeouts_note,
     format_long_date,
     format_matchup,
     format_short_date,
 )
-from tests.factories import make_league_hits_context, make_season
+from tests.factories import (
+    make_league_hits_context,
+    make_league_strikeouts_context,
+    make_season,
+)
 
 
 def test_long_date_has_no_padded_day() -> None:
@@ -108,7 +116,27 @@ def test_hits_per_game_is_the_caption_for_rate_cards() -> None:
     assert cards[3].caption == "Completed Games"
 
 
+def strikeout_comparison(
+    strikeouts: list[int], *, window: int, mlb_strikeouts_per_game: float
+):
+    """Build a strikeout analysis and an MLB comparison against a chosen average."""
+    analysis = build_team_strikeouts_analysis(
+        make_season(hits=[8] * len(strikeouts), strikeouts=strikeouts),
+        rolling_window=window,
+    )
+    league = make_league_strikeouts_context(
+        total_strikeouts=round(mlb_strikeouts_per_game * 100), team_game_records=100
+    )
+    return analysis, compare_team_strikeouts_to_league(analysis, league)
+
+
 def test_strikeout_cards_describe_batting_strikeouts() -> None:
+    """Issue #23 replaced the prior-window card with the MLB comparison.
+
+    ``TeamStrikeoutsSummary`` still calculates the prior-window change and
+    ``tests/test_analytics_team_strikeouts.py`` still covers it; only the card
+    row changed, so that the row keeps four cards instead of growing a fifth.
+    """
     analysis = build_team_strikeouts_analysis(
         make_season(hits=[8] * 4, strikeouts=[10, 8, 12, 6]), rolling_window=2
     )
@@ -116,10 +144,11 @@ def test_strikeout_cards_describe_batting_strikeouts() -> None:
     assert [card.label for card in cards] == [
         "Recent 2-Game Avg",
         "Season Avg",
-        "vs Prior 2",
+        "vs MLB",
         "Games Played",
     ]
     assert cards[0].caption == "Batting Strikeouts per Game"
+    assert analysis.summary.change_vs_prior_window is not None
 
 
 def test_strikeout_cards_round_for_display_only() -> None:
@@ -131,30 +160,95 @@ def test_strikeout_cards_round_for_display_only() -> None:
     assert analysis.summary.season_average == pytest.approx(2 / 3)
 
 
-def test_strikeout_change_card_is_signed_and_neutral() -> None:
+def test_striking_out_more_than_mlb_reads_as_a_positive_number() -> None:
     """A plain signed number: no wording that calls a direction good or bad."""
-    analysis = build_team_strikeouts_analysis(
-        make_season(hits=[8] * 4, strikeouts=[2, 2, 8, 8]), rolling_window=2
+    analysis, comparison = strikeout_comparison(
+        [9] * 10, window=5, mlb_strikeouts_per_game=8.40
     )
-    change = build_strikeout_summary_cards(analysis)[2]
-    assert change.value == "+6.00"
-    assert change.caption == "Batting Strikeouts per Game"
+    card = build_strikeout_summary_cards(analysis, comparison)[2]
+    assert (card.value, card.caption) == ("+0.60", "Batting Strikeouts per Game")
 
 
-def test_strikeout_decrease_is_shown_as_a_negative_number() -> None:
-    analysis = build_team_strikeouts_analysis(
-        make_season(hits=[8] * 4, strikeouts=[8, 8, 2, 2]), rolling_window=2
+def test_striking_out_less_than_mlb_reads_as_a_negative_number() -> None:
+    """The worked example from the issue: 7.80 against 8.40 shows -0.60."""
+    analysis, comparison = strikeout_comparison(
+        [8, 8, 8, 8, 7], window=5, mlb_strikeouts_per_game=8.40
     )
-    assert build_strikeout_summary_cards(analysis)[2].value == "-6.00"
+    card = build_strikeout_summary_cards(analysis, comparison)[2]
+    assert card.value == "-0.60"
 
 
-def test_strikeout_change_card_says_when_there_are_too_few_games() -> None:
+def test_strikeout_league_card_says_when_no_mlb_average_is_available() -> None:
+    """Without trustworthy league data the card must not invent a number."""
     analysis = build_team_strikeouts_analysis(
-        make_season(hits=[8] * 3, strikeouts=[5, 5, 5]), rolling_window=3
+        make_season(hits=[8] * 9, strikeouts=[6] * 9), rolling_window=5
     )
-    change = build_strikeout_summary_cards(analysis)[2]
-    assert change.value == "—"
-    assert change.caption == "Not enough games"
+    card = build_strikeout_summary_cards(analysis)[2]
+    assert card.value == "—"
+    assert card.caption == "Comparison unavailable"
+    assert "0.00" not in card.value
+
+
+def test_strikeout_league_note_explains_why_a_comparison_is_missing() -> None:
+    note = format_league_strikeouts_note(None)
+    assert note == LEAGUE_STRIKEOUTS_UNAVAILABLE_NOTE
+    assert "complete league-season import" in note
+    assert "batting strikeout" in note
+
+
+def test_strikeout_league_note_reports_the_average_and_what_it_covers() -> None:
+    _, comparison = strikeout_comparison(
+        [9] * 10, window=5, mlb_strikeouts_per_game=8.40
+    )
+    note = format_league_strikeouts_note(comparison)
+    assert "8.40 times per game" in note
+    assert "100 team-game records" in note
+    assert "currently stored" in note
+    assert "finished being played" in note
+
+
+def test_strikeout_league_note_says_batting_not_pitching() -> None:
+    """A per-game strikeout number must not be readable as the team's pitching."""
+    _, comparison = strikeout_comparison(
+        [9] * 10, window=5, mlb_strikeouts_per_game=8.40
+    )
+    note = format_league_strikeouts_note(comparison)
+    assert "MLB hitters struck out" in note
+    assert "total batting strikeouts divided by total team-game records" in note
+
+
+def test_strikeout_league_note_does_not_call_the_season_finished() -> None:
+    _, comparison = strikeout_comparison(
+        [9] * 10, window=5, mlb_strikeouts_per_game=8.40
+    )
+    assert "season complete" not in format_league_strikeouts_note(comparison).lower()
+
+
+def test_backfill_note_names_the_gap_and_the_league_import() -> None:
+    """Complete coverage plus legacy nulls is a different problem, said plainly."""
+    note = format_league_strikeouts_backfill_note(
+        season=2025,
+        records_missing=12,
+        records_total=4860,
+        reimport_command=(
+            "poetry run python scripts/import_league_season.py --season 2025"
+        ),
+    )
+    assert "12 of the 4,860 team-game records stored for 2025 have no" in note
+    assert "not counted as zero" in note
+    assert "import_league_season.py --season 2025" in note
+    assert note != LEAGUE_STRIKEOUTS_UNAVAILABLE_NOTE
+
+
+def test_backfill_note_reads_correctly_for_a_single_missing_record() -> None:
+    """One unknown total disqualifies the season, so the sentence must fit it."""
+    note = format_league_strikeouts_backfill_note(
+        season=2026,
+        records_missing=1,
+        records_total=4860,
+        reimport_command="poetry run python scripts/import_league_season.py",
+    )
+    assert "1 of the 4,860 team-game records stored for 2026 has no" in note
 
 
 def test_strikeout_games_played_counts_completed_games() -> None:

@@ -21,15 +21,14 @@ from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamStrikeoutsAnalysis,
+    TeamStrikeoutsLeagueComparison,
 )
 from app.web.formatting import format_long_date, format_matchup, format_short_date
 
 CHART_DIV_ID = "team-hits-chart"
 RAW_HITS_TRACE_NAME = "Game Hits"
-SEASON_AVERAGE_TRACE_NAME = "Season Average"
-# The hits chart can carry two horizontal reference lines at once, so its
-# team line says whose average it is. The strikeout chart has one, and keeps
-# the shorter label.
+# Either chart can carry two horizontal reference lines at once, so the team
+# line always says whose average it is.
 TEAM_SEASON_AVERAGE_TRACE_NAME = "Team Season Average"
 MLB_AVERAGE_TRACE_NAME = "MLB Average"
 
@@ -289,8 +288,18 @@ def build_team_hits_figure(
     return figure
 
 
-def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
-    """Build the batting-strikeouts-per-game figure for one team-season."""
+def build_team_strikeouts_figure(
+    analysis: TeamStrikeoutsAnalysis,
+    league_comparison: TeamStrikeoutsLeagueComparison | None = None,
+) -> go.Figure:
+    """Build the batting-strikeouts-per-game figure for one team-season.
+
+    ``league_comparison`` adds a fourth trace, a horizontal MLB reference line,
+    drawn in the same amber dotted style the hits chart uses so the two pages
+    read as one application. It is optional: a season without trustworthy
+    league batting strikeout data has no MLB average to draw, and the team's
+    own chart must still render.
+    """
     game_numbers = [point.season_game_number for point in analysis.points]
     game_dates = [point.game_date for point in analysis.points]
     strikeouts = [point.strikeouts for point in analysis.points]
@@ -353,18 +362,41 @@ def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
         go.Scatter(
             x=[game_numbers[0], game_numbers[-1]],
             y=[season_average, season_average],
-            name=SEASON_AVERAGE_TRACE_NAME,
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
             mode="lines",
             line={"color": _NAVY, "width": 2, "dash": "dash"},
             hoverinfo="skip",
         )
     )
-    _label_reference_line(
-        figure,
-        x=game_numbers[-1],
-        y=season_average,
-        name=SEASON_AVERAGE_TRACE_NAME,
-    )
+    if league_comparison is not None:
+        mlb_average = league_comparison.league.strikeouts_per_game
+        figure.add_trace(
+            go.Scatter(
+                x=[game_numbers[0], game_numbers[-1]],
+                y=[mlb_average, mlb_average],
+                name=MLB_AVERAGE_TRACE_NAME,
+                mode="lines",
+                line={"color": _AMBER, "width": 2, "dash": "dot"},
+                hoverinfo="skip",
+            )
+        )
+
+    # Only one of the two horizontal lines is labelled. They can sit within a
+    # tenth of a strikeout of each other, and two labels there would overlap.
+    if league_comparison is None:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=season_average,
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+        )
+    else:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=league_comparison.league.strikeouts_per_game,
+            name=MLB_AVERAGE_TRACE_NAME,
+        )
 
     tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
     figure.update_layout(

@@ -105,6 +105,19 @@
             whether more batting strikeouts matter depends on the question being
             asked and on what else the offense is doing.
           </p>
+          <p>
+            {% if league_comparison %}
+              The dotted line is MLB overall.
+            {% endif %}
+            {{ league_comparison_note }}
+            {% if league_comparison %}
+              A positive <strong>vs MLB</strong> value means
+              {{ analysis.team_name }}'s hitters struck out more times per game
+              than MLB overall across the stored season, and a negative value
+              fewer. It is descriptive context, not a measure of significance,
+              and neither direction is better by itself.
+            {% endif %}
+          </p>
           <h3>What K/Game does not tell you</h3>
           <p>
             Strikeouts per game is a count, not a rate. Games contain different
