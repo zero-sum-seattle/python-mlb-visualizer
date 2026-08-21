@@ -338,6 +338,24 @@ def test_the_page_does_not_call_more_strikeouts_good_or_bad(
     assert "not labelled good or bad here" in body
 
 
+def test_the_page_uses_the_same_layout_regions_as_hits(
+    client: TestClient, seed: SeedFn
+) -> None:
+    """Both metric pages are built from the same shell, cards, and panels."""
+    seed_with_strikeouts(seed, [10, 8, 12])
+    body = client.get("/strikeouts").text
+    for region in (
+        'class="site-header"',
+        'class="shell page"',
+        'class="controls card"',
+        'class="card chart-card"',
+        'class="summary"',
+        'class="about"',
+        'class="site-footer"',
+    ):
+        assert region in body
+
+
 # --- navigation ---------------------------------------------------------------
 
 

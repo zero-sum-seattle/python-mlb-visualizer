@@ -83,6 +83,17 @@ def test_season_average_trace_spans_the_whole_season(figure) -> None:
     assert list(figure.data[2].x) == [1, 5]
 
 
+def test_the_season_average_line_is_labelled_with_its_value(figure) -> None:
+    annotation = figure.layout.annotations[0]
+    assert SEASON_AVERAGE_TRACE_NAME in annotation.text
+    assert "9.00" in annotation.text
+
+
+def test_x_axis_ticks_carry_the_game_date(figure) -> None:
+    """A game number alone does not say when in the season a stretch happened."""
+    assert figure.layout.xaxis.ticktext[0] == "1<br>Mar 27"
+
+
 def test_season_average_trace_is_dashed(figure) -> None:
     assert figure.data[2].line.dash == "dash"
 

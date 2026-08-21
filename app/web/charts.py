@@ -10,6 +10,7 @@ semantics belong to which statistic, which is harder to read than two explicit
 builders.
 """
 
+from datetime import date
 from functools import lru_cache
 
 import plotly.graph_objects as go
@@ -21,7 +22,7 @@ from app.schemas.analytics import (
     TeamHitsLeagueComparison,
     TeamStrikeoutsAnalysis,
 )
-from app.web.formatting import format_long_date, format_matchup
+from app.web.formatting import format_long_date, format_matchup, format_short_date
 
 CHART_DIV_ID = "team-hits-chart"
 RAW_HITS_TRACE_NAME = "Game Hits"
@@ -48,7 +49,14 @@ _TEAL = "#0f8b8d"
 _AMBER = "#b26a00"
 _RAW_LINE = "#b7c7d8"
 _RAW_MARKER = "#7c93ab"
-_GRID = "#e6ebf1"
+_GRID = "#dbe2ea"
+_AXIS_LINE = "#c9d3de"
+_AXIS_INK = "#5b6b7c"
+# The right gutter holds the reference-line label; the rest is sized by the
+# axes themselves.
+_MARGIN = {"l": 8, "r": 78, "t": 8, "b": 8}
+_AXIS_TITLE_FONT = {"size": 12, "color": _AXIS_INK}
+_TICK_FONT = {"size": 11, "color": _AXIS_INK}
 
 CHART_CONFIG = {
     "responsive": True,
@@ -63,6 +71,62 @@ def rolling_average_trace_name(rolling_window: int) -> str:
     return f"{rolling_window}-Game Average"
 
 
+def _season_game_ticks(
+    game_numbers: list[int],
+    game_dates: list[date],
+) -> tuple[list[int], list[str]]:
+    """Label about ten games across the season with their number and date.
+
+    A season game number alone does not tell a reader when in the season a
+    stretch happened, so each labelled tick carries the date of that game. The
+    last game is always labelled, because where the stored data ends is the
+    thing a reader most often wants to place in time.
+    """
+    count = len(game_numbers)
+    step = max(1, round(count / 10))
+    indexes = list(range(0, count, step))
+    # Replace the final stepped tick when it would crowd the last game rather
+    # than adding a label on top of it.
+    if count - 1 - indexes[-1] < step / 2:
+        indexes[-1] = count - 1
+    else:
+        indexes.append(count - 1)
+
+    return (
+        [game_numbers[index] for index in indexes],
+        [
+            f"{game_numbers[index]}<br>{format_short_date(game_dates[index])}"
+            for index in indexes
+        ],
+    )
+
+
+def _label_reference_line(
+    figure: go.Figure,
+    *,
+    x: int,
+    y: float,
+    name: str,
+) -> None:
+    """Name a horizontal reference line at the right edge of the plot.
+
+    The legend says which line is which, but the value itself is what a reader
+    compares against, and reading it off the axis is guesswork when two
+    reference lines sit close together.
+    """
+    figure.add_annotation(
+        x=x,
+        y=y,
+        text=f"{name}<br>{y:.2f}",
+        showarrow=False,
+        xanchor="left",
+        yanchor="middle",
+        xshift=8,
+        align="left",
+        font={"size": 11, "color": _AXIS_INK},
+    )
+
+
 def build_team_hits_figure(
     analysis: TeamHitsAnalysis,
     league_comparison: TeamHitsLeagueComparison | None = None,
@@ -74,6 +138,7 @@ def build_team_hits_figure(
     average to draw, and the team's own chart must still render.
     """
     game_numbers = [point.season_game_number for point in analysis.points]
+    game_dates = [point.game_date for point in analysis.points]
     hits = [point.hits for point in analysis.points]
     rolling = [point.rolling_average for point in analysis.points]
     # Each hover box shows date, matchup, hits, and rolling average regardless
@@ -105,7 +170,14 @@ def build_team_hits_figure(
             name=RAW_HITS_TRACE_NAME,
             mode="lines+markers",
             line={"color": _RAW_LINE, "width": 1.2},
-            marker={"color": _RAW_MARKER, "size": 5},
+            # Open circles: the game markers sit on top of each other in a
+            # 162-game season, and an outline stays readable where filled
+            # dots merge into a blob.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
             hovertemplate=hover_template,
         )
     )
@@ -146,12 +218,30 @@ def build_team_hits_figure(
             )
         )
 
+    # Only one of the two horizontal lines is labelled. They can sit within a
+    # tenth of a hit of each other, and two labels there would overlap.
+    if league_comparison is None:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=season_average,
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+        )
+    else:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=league_comparison.league.hits_per_game,
+            name=MLB_AVERAGE_TRACE_NAME,
+        )
+
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
     figure.update_layout(
         template="plotly_white",
-        # Axis automargin sizes the gutters, which keeps the plot area as wide
-        # as possible on a narrow phone screen.
-        margin={"l": 8, "r": 8, "t": 8, "b": 8},
-        height=440,
+        # Axis automargin sizes the left and bottom gutters, which keeps the
+        # plot area as wide as possible on a narrow phone screen.
+        margin=_MARGIN,
+        height=470,
         hovermode="closest",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -159,21 +249,35 @@ def build_team_hits_figure(
         legend={
             "orientation": "h",
             "yanchor": "bottom",
-            "y": 1.02,
-            "xanchor": "left",
-            "x": 0,
-            "font": {"size": 12},
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
         },
         xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 8},
-            "gridcolor": _GRID,
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            # Only the horizontal gridlines are drawn: they are what a reader
+            # measures a value against, and vertical lines only add noise.
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
             "zeroline": False,
             "rangemode": "tozero",
             "automargin": True,
         },
         yaxis={
-            "title": {"text": Y_AXIS_TITLE, "standoff": 8},
+            "title": {
+                "text": Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
             "gridcolor": _GRID,
+            "griddash": "dot",
             "zeroline": False,
             "rangemode": "tozero",
             # Whole numbers of hits; the range still grows with the data.
@@ -188,6 +292,7 @@ def build_team_hits_figure(
 def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
     """Build the batting-strikeouts-per-game figure for one team-season."""
     game_numbers = [point.season_game_number for point in analysis.points]
+    game_dates = [point.game_date for point in analysis.points]
     strikeouts = [point.strikeouts for point in analysis.points]
     rolling = [point.rolling_average for point in analysis.points]
     # Each hover box shows date, matchup, batting strikeouts, and rolling
@@ -219,7 +324,14 @@ def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
             name=RAW_STRIKEOUTS_TRACE_NAME,
             mode="lines+markers",
             line={"color": _RAW_LINE, "width": 1.2},
-            marker={"color": _RAW_MARKER, "size": 5},
+            # Open circles: the game markers sit on top of each other in a
+            # 162-game season, and an outline stays readable where filled
+            # dots merge into a blob.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
             hovertemplate=hover_template,
         )
     )
@@ -247,11 +359,18 @@ def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
             hoverinfo="skip",
         )
     )
+    _label_reference_line(
+        figure,
+        x=game_numbers[-1],
+        y=season_average,
+        name=SEASON_AVERAGE_TRACE_NAME,
+    )
 
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
     figure.update_layout(
         template="plotly_white",
-        margin={"l": 8, "r": 8, "t": 8, "b": 8},
-        height=440,
+        margin=_MARGIN,
+        height=470,
         hovermode="closest",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -259,21 +378,35 @@ def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
         legend={
             "orientation": "h",
             "yanchor": "bottom",
-            "y": 1.02,
-            "xanchor": "left",
-            "x": 0,
-            "font": {"size": 12},
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
         },
         xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 8},
-            "gridcolor": _GRID,
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            # Only the horizontal gridlines are drawn: they are what a reader
+            # measures a value against, and vertical lines only add noise.
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
             "zeroline": False,
             "rangemode": "tozero",
             "automargin": True,
         },
         yaxis={
-            "title": {"text": STRIKEOUTS_Y_AXIS_TITLE, "standoff": 8},
+            "title": {
+                "text": STRIKEOUTS_Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
             "gridcolor": _GRID,
+            "griddash": "dot",
             "zeroline": False,
             # Starts at zero like the hits chart, and grows with the data. No
             # fixed maximum: a team that strikes out 20 times must still fit.

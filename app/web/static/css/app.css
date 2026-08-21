@@ -2,15 +2,20 @@
   --navy: #12263f;
   --navy-deep: #0b1b2e;
   --navy-soft: #35506f;
+  --header-bg: #0c2137;
   --teal: #0f8b8d;
   --teal-dark: #0b6d6f;
-  --page-bg: #f4f6f9;
+  --page-bg: #f5f7fa;
   --card-bg: #ffffff;
-  --border: #dfe5ec;
+  --border: #e2e8f0;
   --text: #1c2733;
   --muted: #5b6b7c;
-  --shadow: 0 1px 2px rgba(18, 38, 63, 0.06), 0 8px 24px rgba(18, 38, 63, 0.06);
-  --radius: 10px;
+  --muted-soft: #8a99a8;
+  --info-bg: #eff6fd;
+  --info-border: #d3e3f7;
+  --info-ink: #1d4e89;
+  --shadow: 0 1px 2px rgba(18, 38, 63, 0.05), 0 6px 18px rgba(18, 38, 63, 0.05);
+  --radius: 12px;
 }
 
 * {
@@ -34,96 +39,122 @@ body {
   line-height: 1.5;
 }
 
+/* The shell spans the window rather than centring in a fixed column: the
+   chart is the content, and a season-long series uses every pixel it is
+   given. Reading measure is protected on the panels that hold prose. */
 .shell {
   width: 100%;
-  max-width: 72rem;
   margin: 0 auto;
-  padding: 0 1.5rem;
+  padding: 0 2.5rem;
 }
 
 /* Header */
 
 .site-header {
-  background: var(--navy);
+  background: var(--header-bg);
   color: #ffffff;
-  border-bottom: 3px solid var(--teal);
 }
 
 .site-header__inner {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding-top: 1rem;
-  padding-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  padding-top: 1.15rem;
+  padding-bottom: 1.15rem;
 }
 
 .brand {
-  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #ffffff;
+  font-size: 1.3rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
+  text-decoration: none;
 }
 
-.brand__section {
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #9fd8d9;
+.brand__logo {
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+
+.brand:hover {
+  color: #d8e6f2;
 }
 
 /* Navigation */
 
 .site-nav {
-  background: var(--navy-deep);
-}
-
-.site-nav__inner {
   display: flex;
-  gap: 0.25rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 .site-nav__link {
   display: inline-block;
-  padding: 0.65rem 0.9rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
   color: #c8d6e5;
   font-size: 0.95rem;
   font-weight: 600;
   text-decoration: none;
-  border-bottom: 3px solid transparent;
 }
 
 .site-nav__link:hover {
   color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .site-nav__link--current {
   color: #ffffff;
-  border-bottom-color: var(--teal);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.brand:focus-visible,
+.site-nav__link:focus-visible {
+  outline: 2px solid #7fd3d4;
+  outline-offset: 2px;
 }
 
 /* Page */
 
 .page {
   flex: 1;
-  padding-top: 2rem;
-  padding-bottom: 3rem;
+  padding-top: 2.25rem;
+  padding-bottom: 2.5rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
 }
 
+.page-intro {
+  margin-bottom: 0.25rem;
+}
+
 .page-intro h1 {
-  margin: 0 0 0.35rem;
-  font-size: 2rem;
-  line-height: 1.2;
+  margin: 0 0 0.3rem;
+  font-size: 2.4rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
   color: var(--navy);
 }
 
 .page-intro__subtitle {
   margin: 0;
   color: var(--muted);
-  font-size: 1.05rem;
+  font-size: 1.02rem;
+}
+
+/* A decorative logo that failed to load is hidden by script. This beats the
+   display rules the individual logos set, which would otherwise win against
+   the browser's own `[hidden]` rule. */
+.js-logo[hidden] {
+  display: none;
 }
 
 .card {
@@ -139,8 +170,17 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
+  justify-content: space-between;
   gap: 1rem 1.5rem;
-  padding: 1.15rem 1.25rem;
+  padding: 1.1rem 1.35rem;
+}
+
+.controls__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  flex: 1 1 34rem;
+  min-width: 0;
 }
 
 .control {
@@ -151,22 +191,34 @@ body {
   min-width: 0;
 }
 
-.control--action {
-  flex: 0 0 auto;
+.control label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
 }
 
-.control label {
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--muted);
+/* The club logo sits inside the select box, so the control reads as one
+   field rather than an image parked next to a dropdown. */
+.control__field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.control__logo {
+  position: absolute;
+  top: 50%;
+  left: 0.7rem;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .control select {
   appearance: none;
   width: 100%;
-  padding: 0.6rem 2rem 0.6rem 0.75rem;
+  padding: 0.62rem 2rem 0.62rem 0.8rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   background-color: #fff;
@@ -178,6 +230,21 @@ body {
   color: var(--text);
   font: inherit;
   font-size: 0.95rem;
+}
+
+/* Room for the club mark inside the field. Declared after the rule above,
+   which sets padding with a shorthand at the same specificity. */
+.control__field select {
+  padding-left: 2.6rem;
+}
+
+/* A mark that failed to load is hidden, and the field closes the gap. */
+.control__logo[hidden] + select {
+  padding-left: 0.8rem;
+}
+
+.controls__action {
+  flex: 0 0 auto;
 }
 
 .control select:focus-visible,
@@ -204,23 +271,29 @@ body {
 /* Chart */
 
 .chart-card {
-  padding: 1.25rem;
+  padding: 1.4rem 1.5rem 1.1rem;
 }
 
 .chart-card__header {
-  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.75rem;
 }
 
 .chart-card__header h2 {
   margin: 0;
-  font-size: 1.3rem;
+  font-size: 1.25rem;
+  font-weight: 700;
   color: var(--navy);
 }
 
 .chart-card__season {
-  margin: 0.15rem 0 0;
+  margin: 0;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
 /* Plotly will not draw this figure below roughly 27rem, so on a phone the
@@ -243,57 +316,103 @@ body {
 }
 
 .summary-card {
-  padding: 1rem 1.15rem;
-  border-top: 3px solid var(--teal);
+  padding: 1.1rem 1.25rem 1.15rem;
 }
 
 .summary-card__label {
   margin: 0;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 0.82rem;
+  font-weight: 600;
   color: var(--muted);
 }
 
 .summary-card__value {
-  margin: 0.3rem 0 0;
-  font-size: 2rem;
+  margin: 0.4rem 0 0;
+  font-size: 2.2rem;
   font-weight: 700;
   line-height: 1.1;
-  color: var(--navy);
+  letter-spacing: -0.02em;
+  color: var(--teal-dark);
   font-variant-numeric: tabular-nums;
 }
 
 .summary-card__caption {
-  margin: 0.15rem 0 0;
-  font-size: 0.85rem;
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
   color: var(--muted);
 }
 
-/* Explanation and notices */
+/* Explanation panel */
 
-.about,
-.notice {
-  padding: 1.15rem 1.25rem;
+.about {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 1.15rem 1.35rem;
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius);
+  background: var(--info-bg);
 }
 
-.about h2,
-.notice h1,
-.notice h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.1rem;
+.about__icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--info-ink);
+}
+
+.about__icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.about__body {
+  min-width: 0;
+}
+
+.about h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--info-ink);
+}
+
+.about h3 {
+  margin: 0.9rem 0 0.35rem;
+  font-size: 0.92rem;
+  font-weight: 700;
   color: var(--navy);
 }
 
-.about p,
+.about p {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+  max-width: 84ch;
+}
+
+.about p:last-child {
+  margin-bottom: 0;
+}
+
+/* Notices */
+
+.notice {
+  padding: 1.15rem 1.35rem;
+}
+
+.notice h1,
+.notice h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+  color: var(--navy);
+}
+
 .notice p {
   margin: 0 0 0.5rem;
   color: var(--muted);
-  max-width: 62ch;
+  max-width: 72ch;
 }
 
-.about p:last-child,
 .notice p:last-child {
   margin-bottom: 0;
 }
@@ -329,46 +448,57 @@ body {
 
 .site-footer {
   border-top: 1px solid var(--border);
-  background: #fff;
-  padding: 1.25rem 0;
-  color: var(--muted);
-  font-size: 0.85rem;
+  padding: 1rem 0 1.5rem;
+  color: var(--muted-soft);
+  font-size: 0.82rem;
 }
 
-.site-footer p {
-  margin: 0 0 0.2rem;
+.site-footer__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.85rem;
+  margin: 0;
+}
+
+/* Separator between the footer facts, so they read as one compact line. It
+   trails the fact it follows, so a wrap never starts a line with a bullet. */
+.site-footer__meta span:not(:last-child)::after {
+  content: "•";
+  margin-left: 0.85rem;
 }
 
 .site-footer__disclaimer {
-  color: #8a99a8;
+  margin: 0.3rem 0 0;
 }
 
 /* Responsive */
 
-@media (max-width: 62rem) {
+@media (max-width: 72rem) {
   .summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 40rem) {
+@media (max-width: 48rem) {
+  /* Only the inline padding changes with width. A `padding` shorthand here
+     would also reset the vertical padding `.page` sets. */
   .shell {
-    padding: 0 1rem;
-  }
-
-  .site-header__inner {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.15rem;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
   }
 
   .page-intro h1 {
-    font-size: 1.6rem;
+    font-size: 1.85rem;
   }
 
   .controls {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .controls__fields {
+    flex-direction: column;
+    flex: 1 1 auto;
   }
 
   .control {
@@ -378,12 +508,43 @@ body {
   .controls button {
     width: 100%;
   }
+}
+
+@media (max-width: 34rem) {
+  .site-header__inner {
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .site-nav {
+    margin-left: -0.85rem;
+  }
+
+  .page-intro h1 {
+    font-size: 1.65rem;
+  }
 
   .summary {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .summary-card__value {
-    font-size: 1.75rem;
+    font-size: 1.9rem;
+  }
+
+  /* Too narrow for one line: the facts stack, so the separator is dropped. */
+  .site-footer__meta {
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .site-footer__meta span:not(:last-child)::after {
+    content: none;
+  }
+
+  .chart-card,
+  .about,
+  .notice {
+    padding: 1.05rem 1.1rem;
   }
 }

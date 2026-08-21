@@ -76,6 +76,12 @@ def _coerce_window(value: object) -> object:
 RollingWindowParam = Annotated[RollingWindow, BeforeValidator(_coerce_window)]
 
 PLOTLY_BUNDLE_PATH = "/vendor/plotly.min.js"
+# Club and league marks are fetched by the browser from MLB's public logo
+# host, keyed by the same team ids the application already stores. They are
+# decorative: every page states the team in text as well, and the layout holds
+# when the images do not load, which is what happens with no internet access.
+MLB_LOGO_URL = "https://www.mlbstatic.com/team-logos/league-on-dark/1.svg"
+TEAM_LOGO_URL_PREFIX = "https://www.mlbstatic.com/team-logos/"
 IMPORT_COMMAND = (
     "poetry run python scripts/import_team_season.py --team-id 136 --season 2025"
 )
@@ -127,6 +133,8 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             "selected_season": None,
             "import_command": IMPORT_COMMAND,
             "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
             "form_action": HITS_PATH,
             "nav_links": build_nav_links(
                 current_path=HITS_PATH,
@@ -232,6 +240,8 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             "selected_season": None,
             "import_command": IMPORT_COMMAND,
             "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
             "form_action": STRIKEOUTS_PATH,
             "nav_links": build_nav_links(
                 current_path=STRIKEOUTS_PATH,
@@ -383,6 +393,7 @@ def _render_schema_error(
         name="error.html",
         context={
             "app_name": settings.app_name,
+            "mlb_logo_url": MLB_LOGO_URL,
             "heading": "The database schema is not ready",
             "message": str(error),
             "commands": [MIGRATION_HINT],

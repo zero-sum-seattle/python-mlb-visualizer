@@ -14,6 +14,7 @@ from app.web.formatting import (
     format_league_comparison_note,
     format_long_date,
     format_matchup,
+    format_short_date,
 )
 from tests.factories import make_league_hits_context, make_season
 
@@ -162,3 +163,8 @@ def test_strikeout_games_played_counts_completed_games() -> None:
     )
     games = build_strikeout_summary_cards(analysis)[3]
     assert (games.value, games.caption) == ("5", "Completed Games")
+
+
+def test_short_date_drops_the_year_for_axis_ticks() -> None:
+    assert format_short_date(date(2025, 5, 8)) == "May 8"
+    assert format_short_date(date(2025, 9, 28)) == "Sep 28"

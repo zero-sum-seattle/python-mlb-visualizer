@@ -264,6 +264,49 @@ def test_page_uses_the_product_header(client: TestClient, seed: SeedFn) -> None:
     assert "Team Hitting Trends" in body
 
 
+def test_the_navigation_sits_inside_the_single_header_bar(
+    client: TestClient, seed: SeedFn
+) -> None:
+    """One header bar carries both the branding and the metric navigation."""
+    seed(hits=[7] * 20)
+    body = client.get("/").text
+    header = body[body.index('class="site-header"') : body.index("</header>")]
+    assert "MLB Stats Visualizer" in header
+    assert 'aria-label="Metrics"' in header
+    assert "Batting Strikeouts</a>" in header
+
+
+def test_the_selector_shows_the_club_logo_for_the_selected_team(
+    client: TestClient, seed: SeedFn
+) -> None:
+    """Decorative only: the select still names the team in text."""
+    seed(hits=[7] * 20)
+    body = client.get("/?team_id=136&season=2025").text
+    assert "team-logos/136.svg" in body
+    assert 'alt=""' in body
+
+
+def test_the_selectors_keep_their_labels_and_ids(
+    client: TestClient, seed: SeedFn
+) -> None:
+    """The layout must not detach a label from the control it names."""
+    seed(hits=[7] * 20)
+    body = client.get("/").text
+    for field in ("team_id", "season", "window"):
+        assert f'for="{field}"' in body
+        assert f'id="{field}"' in body
+
+
+def test_the_footer_keeps_the_data_source_on_one_compact_line(
+    client: TestClient, seed: SeedFn
+) -> None:
+    seed(hits=[7, 7, 7])
+    body = client.get("/").text
+    footer = body[body.index('class="site-footer"') :]
+    assert "Data through March 29, 2025" in footer
+    assert "Source: MLB Stats API via python-mlb-statsapi" in footer
+
+
 def test_query_parameters_survive_in_the_form_selection(
     client: TestClient, seed: SeedFn
 ) -> None:

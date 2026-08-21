@@ -5,34 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}{{ app_name }}{% endblock %}</title>
     <link rel="stylesheet" href="/static/css/app.css" />
+    <script src="/static/js/logos.js" defer></script>
     {% block head %}{% endblock %}
   </head>
   <body>
+    {# One header bar: branding on the left, the real metric navigation on the
+       right. The navigation is the only site-wide control the application
+       actually has, so it fills the space rather than a second stacked bar. #}
     <header class="site-header">
       <div class="shell site-header__inner">
-        <span class="brand">MLB Stats Visualizer</span>
-        <span class="brand__section">Team Hitting</span>
-      </div>
-      {% if nav_links %}
-        <nav class="site-nav" aria-label="Metrics">
-          <div class="shell site-nav__inner">
+        <a class="brand" href="/">
+          {# Decorative: the wordmark beside it already names the application. #}
+          <img class="brand__logo js-logo" src="{{ mlb_logo_url }}" alt="" width="34" height="34" />
+          MLB Stats Visualizer
+        </a>
+        {% if nav_links %}
+          <nav class="site-nav" aria-label="Metrics">
             {%- for link in nav_links %}
               <a class="site-nav__link{% if link.is_current %} site-nav__link--current{% endif %}"
                  href="{{ link.href }}"
                  {% if link.is_current %}aria-current="page"{% endif %}>{{ link.label }}</a>
             {%- endfor %}
-          </div>
-        </nav>
-      {% endif %}
+          </nav>
+        {% endif %}
+      </div>
     </header>
 
     <main class="shell page">{% block content %}{% endblock %}</main>
 
     <footer class="site-footer">
-      <div class="shell">
-        {% block footer %}
-          <p>Source: MLB Stats API via python-mlb-statsapi.</p>
-        {% endblock %}
+      <div class="shell site-footer__inner">
+        <p class="site-footer__meta">
+          {% block footer %}
+            <span>Source: MLB Stats API via python-mlb-statsapi</span>
+          {% endblock %}
+        </p>
         <p class="site-footer__disclaimer">
           Educational project. Not affiliated with Major League Baseball.
         </p>
