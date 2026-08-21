@@ -46,6 +46,11 @@ def format_long_date(value: date) -> str:
     return f"{_MONTHS[value.month - 1]} {value.day}, {value.year}"
 
 
+def format_short_date(value: date) -> str:
+    """Format a date as ``May 8``, for axis ticks that already carry the year."""
+    return f"{_MONTHS[value.month - 1][:3]} {value.day}"
+
+
 def format_matchup(opponent_name: str, home_away: HomeAway) -> str:
     """Describe an opponent the way a box score does: ``vs`` home, ``at`` away."""
     prefix = "vs" if home_away == "home" else "at"

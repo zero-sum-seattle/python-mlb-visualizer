@@ -132,6 +132,33 @@ def test_season_average_trace_spans_the_whole_season(figure) -> None:
     assert list(figure.data[2].x) == [1, 5]
 
 
+def test_x_axis_ticks_place_each_labelled_game_in_the_season(figure) -> None:
+    """A game number alone does not say when in the season a stretch happened."""
+    assert figure.layout.xaxis.tickvals[0] == 1
+    assert figure.layout.xaxis.ticktext[0] == "1<br>Mar 27"
+
+
+def test_the_last_game_is_always_labelled(figure) -> None:
+    analysis = build_team_hits_analysis(make_season([8] * 40), rolling_window=5)
+    ticks = build_team_hits_figure(analysis).layout.xaxis
+    assert ticks.tickvals[-1] == 40
+    assert len(set(ticks.tickvals)) == len(ticks.tickvals)
+
+
+def test_the_team_average_line_is_labelled_without_mlb_context(figure) -> None:
+    annotation = figure.layout.annotations[0]
+    assert TEAM_SEASON_AVERAGE_TRACE_NAME in annotation.text
+    assert MLB_AVERAGE_TRACE_NAME not in annotation.text
+
+
+def test_only_the_mlb_line_is_labelled_when_it_is_drawn(league_figure) -> None:
+    """Both lines can sit a tenth of a hit apart, where two labels would collide."""
+    annotations = league_figure.layout.annotations
+    assert len(annotations) == 1
+    assert MLB_AVERAGE_TRACE_NAME in annotations[0].text
+    assert "6.10" in annotations[0].text
+
+
 def test_axis_titles_name_the_baseball_quantities(figure) -> None:
     assert figure.layout.xaxis.title.text == X_AXIS_TITLE
     assert figure.layout.yaxis.title.text == Y_AXIS_TITLE
