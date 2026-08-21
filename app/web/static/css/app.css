@@ -215,15 +215,6 @@ body {
   pointer-events: none;
 }
 
-.control__field select {
-  padding-left: 2.6rem;
-}
-
-/* A logo that failed to load is hidden, and the field closes the gap it left. */
-.control__logo[hidden] + select {
-  padding-left: 0.8rem;
-}
-
 .control select {
   appearance: none;
   width: 100%;
@@ -239,6 +230,17 @@ body {
   color: var(--text);
   font: inherit;
   font-size: 0.95rem;
+}
+
+/* Room for the club mark inside the field. Declared after the rule above,
+   which sets padding with a shorthand at the same specificity. */
+.control__field select {
+  padding-left: 2.6rem;
+}
+
+/* A mark that failed to load is hidden, and the field closes the gap. */
+.control__logo[hidden] + select {
+  padding-left: 0.8rem;
 }
 
 .controls__action {
