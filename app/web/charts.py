@@ -109,7 +109,14 @@ def build_team_hits_figure(
             name=RAW_HITS_TRACE_NAME,
             mode="lines+markers",
             line={"color": _RAW_LINE, "width": 1.2},
-            marker={"color": _RAW_MARKER, "size": 5},
+            # Open circles: the game markers sit on top of each other in a
+            # 162-game season, and an outline stays readable where filled
+            # dots merge into a blob.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
             hovertemplate=hover_template,
         )
     )
@@ -234,7 +241,14 @@ def build_team_strikeouts_figure(analysis: TeamStrikeoutsAnalysis) -> go.Figure:
             name=RAW_STRIKEOUTS_TRACE_NAME,
             mode="lines+markers",
             line={"color": _RAW_LINE, "width": 1.2},
-            marker={"color": _RAW_MARKER, "size": 5},
+            # Open circles: the game markers sit on top of each other in a
+            # 162-game season, and an outline stays readable where filled
+            # dots merge into a blob.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
             hovertemplate=hover_template,
         )
     )
