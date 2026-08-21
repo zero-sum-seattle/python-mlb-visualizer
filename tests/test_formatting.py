@@ -8,12 +8,16 @@ from app.analytics.league_hitting import compare_team_hits_to_league
 from app.analytics.league_runs import compare_team_runs_to_league
 from app.analytics.league_strikeouts import compare_team_strikeouts_to_league
 from app.analytics.team_hitting import build_team_hits_analysis
+from app.analytics.team_hitting_comparison import (
+    build_team_hitting_comparison_analysis,
+)
 from app.analytics.team_runs import build_team_runs_analysis
 from app.analytics.team_strikeouts import build_team_strikeouts_analysis
 from app.web.formatting import (
     LEAGUE_COMPARISON_UNAVAILABLE_NOTE,
     LEAGUE_RUNS_UNAVAILABLE_NOTE,
     LEAGUE_STRIKEOUTS_UNAVAILABLE_NOTE,
+    build_hitting_comparison_summary_cards,
     build_runs_summary_cards,
     build_strikeout_summary_cards,
     build_summary_cards,
@@ -268,6 +272,47 @@ def test_strikeout_games_played_counts_completed_games() -> None:
 def test_short_date_drops_the_year_for_axis_ticks() -> None:
     assert format_short_date(date(2025, 5, 8)) == "May 8"
     assert format_short_date(date(2025, 9, 28)) == "Sep 28"
+
+
+def test_normalized_comparison_cards_use_the_requested_labels_and_values() -> None:
+    games = make_season(
+        hits=[8] * 5,
+        strikeouts=[9] * 5,
+    )
+    hits = build_team_hits_analysis(games, rolling_window=5)
+    strikeouts = build_team_strikeouts_analysis(games, rolling_window=5)
+    analysis = build_team_hitting_comparison_analysis(
+        hits,
+        strikeouts,
+        make_league_hits_context(total_hits=800, team_game_records=100),
+        make_league_strikeouts_context(total_strikeouts=1000, team_game_records=100),
+    )
+
+    cards = build_hitting_comparison_summary_cards(analysis)
+    assert [card.label for card in cards] == [
+        "Recent Hits Index",
+        "Recent K Index",
+        "Trend Gap",
+        "Games Played",
+    ]
+    assert [card.value for card in cards] == ["100", "90", "+10", "5"]
+    assert cards[0].caption == "MLB Avg = 100"
+    assert cards[1].caption == "MLB Avg = 100"
+    assert cards[2].caption == "Hits Index − K Index"
+    assert cards[3].caption == "Completed Games"
+
+
+def test_normalized_comparison_cards_keep_one_meaningful_decimal() -> None:
+    games = make_season(hits=[9] * 5, strikeouts=[9] * 5)
+    analysis = build_team_hitting_comparison_analysis(
+        build_team_hits_analysis(games, rolling_window=5),
+        build_team_strikeouts_analysis(games, rolling_window=5),
+        make_league_hits_context(total_hits=800, team_game_records=100),
+        make_league_strikeouts_context(total_strikeouts=1000, team_game_records=100),
+    )
+
+    cards = build_hitting_comparison_summary_cards(analysis)
+    assert [card.value for card in cards[:3]] == ["112.5", "90", "+22.5"]
 
 
 def runs_comparison(runs: list[int], *, window: int, mlb_runs_per_game: float):

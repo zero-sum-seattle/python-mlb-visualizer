@@ -412,6 +412,131 @@ class TeamStrikeoutsLeagueComparison(BaseModel):
         return self
 
 
+class TeamHittingComparisonPoint(BaseModel):
+    """Normalized rolling hits and batting strikeouts for one completed game.
+
+    Both indexes use their own MLB per-game average as the 100 baseline. The
+    values are descriptive: an index above 100 means more of that statistic
+    than the MLB baseline, which is not automatically favourable.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    game_pk: int = Field(gt=0, description="MLB game identifier.")
+    season_game_number: int = Field(
+        ge=1,
+        description="Continuous 1-based position of the game within the season.",
+    )
+    game_date: date = Field(description="Official date the game counts against.")
+    opponent_name: str = Field(
+        min_length=1, description="Display name of the opponent."
+    )
+    hits_index: float = Field(
+        ge=0,
+        description="Rolling team Hits/Game divided by MLB Hits/Game, times 100.",
+    )
+    strikeouts_index: float = Field(
+        ge=0,
+        description="Rolling team batting K/Game divided by MLB batting K/Game, "
+        "times 100.",
+    )
+
+
+class TeamHittingComparisonSummary(BaseModel):
+    """Headline values for the normalized hitting comparison.
+
+    ``trend_gap`` is only the arithmetic difference between the two most
+    recent normalized indexes. It is not an overall offensive-performance
+    statistic, ranking, percentile, or causal claim.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    games_played: int = Field(ge=1, description="Completed games analysed.")
+    recent_hits_index: float = Field(
+        ge=0, description="Hits index at the most recent rolling point."
+    )
+    recent_strikeouts_index: float = Field(
+        ge=0,
+        description="Batting strikeout index at the most recent rolling point.",
+    )
+    trend_gap: float = Field(description="recent_hits_index - recent_strikeouts_index.")
+
+    @model_validator(mode="after")
+    def _trend_gap_matches_recent_indexes(self) -> TeamHittingComparisonSummary:
+        expected = self.recent_hits_index - self.recent_strikeouts_index
+        if not isclose(self.trend_gap, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"trend_gap ({self.trend_gap}) must equal recent_hits_index - "
+                f"recent_strikeouts_index ({expected})"
+            )
+        return self
+
+
+class TeamHittingComparisonAnalysis(BaseModel):
+    """A team-season's normalized rolling hits-versus-strikeouts trend."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id.")
+    team_name: str = Field(min_length=1, description="Historical name for the season.")
+    season: int = Field(gt=0, description="Season analysed.")
+    rolling_window: int = Field(ge=1, description="Games in the trailing window.")
+    mlb_hits_per_game: float = Field(
+        gt=0, description="Positive MLB Hits/Game denominator used for every point."
+    )
+    mlb_strikeouts_per_game: float = Field(
+        gt=0,
+        description="Positive MLB batting K/Game denominator used for every point.",
+    )
+    baseline_index: float = Field(
+        default=100.0,
+        description="MLB average on both normalized index scales. Always 100.",
+    )
+    points: tuple[TeamHittingComparisonPoint, ...] = Field(
+        min_length=1, description="Games in chart order."
+    )
+    summary: TeamHittingComparisonSummary
+
+    @model_validator(mode="after")
+    def _comparison_is_internally_consistent(
+        self,
+    ) -> TeamHittingComparisonAnalysis:
+        if not isclose(self.baseline_index, 100.0, rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError("baseline_index must equal 100")
+        if self.summary.games_played != len(self.points):
+            raise ValueError(
+                "summary.games_played must equal the number of chart points"
+            )
+
+        recent = self.points[-1]
+        if not isclose(
+            self.summary.recent_hits_index,
+            recent.hits_index,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(
+                "summary.recent_hits_index must equal the final point's hits_index"
+            )
+        if not isclose(
+            self.summary.recent_strikeouts_index,
+            recent.strikeouts_index,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(
+                "summary.recent_strikeouts_index must equal the final point's "
+                "strikeouts_index"
+            )
+        return self
+
+    @property
+    def last_game_date(self) -> date:
+        """Date of the most recent completed game in the comparison."""
+        return self.points[-1].game_date
+
+
 class TeamRunsPoint(BaseModel):
     """One completed game plotted on the team runs chart."""
 

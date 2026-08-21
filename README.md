@@ -1,73 +1,50 @@
 # MLB Stats Visualizer
 
-Interactive MLB statistics visualization web application powered by
-`python-mlb-statsapi`.
+A local-first MLB statistics visualization application built with FastAPI,
+Jinja2, Plotly, and `python-mlb-statsapi`.
 
-## Status
+> **Work in progress:** this project is under active development. The data model,
+> visualizations, navigation, and deployment approach are still evolving. Expect
+> features and UI details to change as the project grows.
 
-**Milestone 0 — Repository Foundation** is complete.
+The application imports MLB data explicitly, stores normalized team-game records
+in SQLite, and renders interactive charts entirely from the local database.
+Normal browser requests do **not** call the MLB Stats API.
 
-**Milestone 1 — Team game-level data feasibility spike** is complete.
+## What it does today
 
-**Milestone 2 — Database persistence and team-season ingestion** is complete.
+- Team Hits/Game trends with rolling and season averages
+- Team batting Strikeouts/Game trends
+- Team Runs/Game trends
+- MLB-wide per-game comparisons when league coverage is trustworthy
+- Normalized Hits vs batting Strikeouts comparison with MLB average = 100
+- Team, season, and rolling-window selectors with shareable URLs
+- League-wide season ingestion with persisted completeness state
+- Offline deterministic test suite and GitHub Actions CI
 
-**Milestone 3 — Team hits web visualization** is complete.
+Player visualizations, additional team metrics, multi-season overlays, and a more
+organized Team/Player UI are planned but not implemented yet.
 
-**Milestone 3.5 — Team batting strikeouts over time** is complete.
+## Screenshots
 
-**Milestone 4 — League-wide season ingestion and completeness** is complete.
+The UI is still being refined. Current desktop and mobile screenshots will live
+here as the design stabilizes.
 
-Milestone 0 provides a FastAPI application with Jinja2 templates, Pydantic
-Settings configuration, pytest coverage, Ruff linting/formatting, and GitHub
-Actions CI.
+<!--
+Add real application screenshots here, for example:
 
-Milestone 1 adds the first MLB data path: normalized `TeamGameBattingLine`
-records from the live MLB Stats API (or fixtures in tests).
+![Team hits chart](docs/screenshots/team-hits.png)
 
-Milestone 2 adds SQLite persistence with SQLAlchemy 2 and Alembic, a
-team-season ingestion service, and an import CLI.
+![Normalized hits vs strikeouts comparison](docs/screenshots/team-comparison.png)
 
-Milestone 3 adds the first visualization page: a team's hits per game with a
-trailing rolling average, drawn with Plotly from data already in SQLite. See
-[docs/team-hits-visualization.md](docs/team-hits-visualization.md).
-
-Milestone 3.5 adds a second metric page on the same foundation: a team's
-batting strikeouts per game. Batting strikeouts were already present in the
-hitting game log Milestone 1 retrieves, so no new MLB request was added. See
-[docs/team-strikeouts-visualization.md](docs/team-strikeouts-visualization.md).
-
-Milestone 4 adds league-wide season ingestion: season-aware MLB team discovery,
-a league ingestion service that reuses the existing team-season path for every
-discovered club, and a persisted record of whether a run actually covered them
-all. It adds no visualization. See
-[docs/league-season-ingestion.md](docs/league-season-ingestion.md).
-
-Milestone 5 adds MLB-wide context to the team hits page: an MLB hits-per-game
-reference line, a `vs MLB` summary card, and a difference between the two. The
-MLB average is a game-weighted mean over stored team-game records, and it is
-shown only when Milestone 4 recorded `COMPLETE` league coverage for the
-selected season. See
-[docs/team-vs-mlb-comparison.md](docs/team-vs-mlb-comparison.md).
-
-Issue #24 adds a third metric page: a team's runs scored per game, with the same
-rolling average, season average, and MLB comparison the other pages carry. Runs
-have been persisted as a required column since Milestone 2, so no new MLB
-request, column, or migration was needed. See
-[docs/team-runs-visualization.md](docs/team-runs-visualization.md).
-
-## Planned MVP
-
-A local web application that:
-
-- Retrieves MLB data through `python-mlb-statsapi`
-- Presents interactive baseball statistics visualizations
-- Runs with a clean Python web stack (FastAPI + Jinja2)
+![Mobile layout](docs/screenshots/mobile.png)
+-->
 
 ## Technology stack
 
 | Layer | Choice |
 | --- | --- |
-| Language | Python 3.12 |
+| Language | Python 3.12+ |
 | Packaging | Poetry |
 | Web framework | FastAPI |
 | Templates | Jinja2 |
@@ -77,22 +54,16 @@ A local web application that:
 | ORM | SQLAlchemy 2 |
 | Migrations | Alembic |
 | Configuration | Pydantic Settings |
-| Testing | pytest, httpx |
+| Testing | pytest |
 | Lint / format | Ruff |
 | CI | GitHub Actions |
 
-## Requirements
+## Installation
+
+Requirements:
 
 - Python 3.12+
 - [Poetry](https://python-poetry.org/docs/#installation)
-
-## Installation
-
-Install Poetry if you do not already have it:
-
-```bash
-curl -sSL https://install.python-poetry.org | python3 -
-```
 
 Clone the repository and install dependencies:
 
@@ -102,340 +73,191 @@ cd python-mlb-visualizer
 poetry install
 ```
 
-Optionally copy the example environment file (defaults work without it):
+Optionally create a local environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-### Database configuration
-
-Default database URL (no `.env` required):
+The default database is:
 
 ```text
 sqlite:///./mlb_visualizer.db
 ```
 
-Override with `DATABASE_URL` in `.env` or the environment. Alembic and the
-application read the same `Settings.database_url` value.
-
-Apply the schema:
+Apply migrations:
 
 ```bash
 poetry run alembic upgrade head
 ```
 
-The database file is created relative to the project root when first used.
+## Import data
 
-## Local development
+The web application reads SQLite only. MLB network access happens through
+explicit import commands.
 
-Apply migrations, import at least one team-season, then start the server:
-
-```bash
-poetry run alembic upgrade head
-poetry run python scripts/import_team_season.py --team-id 136 --season 2025
-poetry run uvicorn app.main:app --reload
-```
-
-Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
-
-- `/` — team hitting trends (hits per game)
-- `/strikeouts` — team batting strikeout trends
-- `/runs` — team run scoring trends (runs scored per game)
-- `/health` — JSON health check
-
-## Team hitting trends page
-
-The homepage charts one team's hits per game for one season, with a trailing
-rolling average and the team's season average.
-
-```text
-http://127.0.0.1:8000/?team_id=136&season=2025&window=15
-```
-
-| Parameter | Meaning | Default |
-| --- | --- | --- |
-| `team_id` | MLB team id that has been imported | Seattle (136) when stored, otherwise the first team alphabetically |
-| `season` | season imported for that team | the most recent stored season |
-| `window` | rolling window: `5`, `10`, `15`, or `30` | `15` |
-
-Submitting the controls produces a shareable URL, so a chart can be linked
-directly. Choosing a different team updates the season selector in the browser
-to that team's stored seasons, so the form cannot submit a combination that has
-no data. The route validates the pair on every request regardless.
-
-**The page reads SQLite only.** No web request touches the MLB Stats API;
-importing data is always the explicit CLI step above. Selectors list only the
-team-seasons that are actually stored locally.
-
-**Rolling average.** Trailing, not centered: the value at game N averages the
-`window` most recent games including game N. Early-season games average every
-game played so far rather than showing a gap. The line joins the calculated
-points with straight segments, so it never implies an average between games.
-
-**Every number describes the stored games.** That may be a season in progress
-or a partial import, so the dashed reference line is the team's average across
-the completed games currently stored, not a guaranteed full season. The
-footer's "Data through" date shows how current the numbers are.
-
-**No MLB-wide average.** The database holds only explicitly imported
-team-seasons, so a league average calculated from it would describe whichever
-teams happen to be stored rather than the league. The third series is the
-team's own stored-season average. League comparison is deferred until
-league-wide ingestion is defined.
-
-If the database is empty, the page explains how to import a team-season. If
-migrations have not been applied, it asks for `poetry run alembic upgrade head`
-instead of failing with a traceback.
-
-## Team batting strikeout trends page
-
-`/strikeouts` charts one team's **batting** strikeouts per game for one season,
-with a trailing rolling average and the team's season average.
-
-```text
-http://127.0.0.1:8000/strikeouts?team_id=136&season=2025&window=15
-```
-
-It takes the same `team_id`, `season`, and `window` parameters as the hits page,
-with the same defaults, and the navigation carries the current selection between
-the two pages. `/` is unchanged and still serves hits.
-
-**Batting, not pitching.** Every label says "Batting Strikeouts": these are
-times the team's own hitters struck out, not strikeouts recorded by its
-pitchers.
-
-**Direction is not labelled good or bad.** A positive "vs Prior {window}" value
-means more batting strikeouts. Whether that is bad depends on the question and
-on what else the offense is doing, so no positive/negative colouring is applied.
-
-**K/Game is a count, not a rate.** Games contain different numbers of plate
-appearances, so a game with more opportunities can show more strikeouts without
-hitters striking out any more often. K% (strikeouts per plate appearance) is the
-opportunity-adjusted measure and is deferred until plate appearances are
-persisted; it is not estimated in the meantime.
-
-### Re-importing for batting strikeouts
-
-Batting strikeouts were added in Milestone 3.5, so team-seasons imported before
-it have no stored strikeout totals. Those totals are **unknown, not zero**, so
-the migration leaves them `NULL` rather than defaulting them.
-
-If a selected team-season still has unimported strikeouts, `/strikeouts`
-explains that and shows the command for that exact team and season instead of
-charting anything:
+Import one team-season:
 
 ```bash
 poetry run python scripts/import_team_season.py --team-id 136 --season 2025
 ```
 
-The same import command as always — there is no separate strikeout import. The
-first re-import counts those rows as **updated**; running it again against
-unchanged MLB data counts them as **unchanged**.
-
-The hits page keeps working normally throughout, before and after the backfill.
-
-## Team run scoring trends page
-
-`/runs` charts one team's **runs scored** per game for one season, with a
-trailing rolling average, the team's season average, and — when league coverage
-allows — an MLB average.
-
-```text
-http://127.0.0.1:8000/runs?team_id=136&season=2025&window=15
-```
-
-It takes the same `team_id`, `season`, and `window` parameters as the other
-metric pages, with the same defaults, and the navigation carries the current
-selection between all three. `/` and `/strikeouts` are unchanged.
-
-**Runs scored, not runs allowed.** Every label says so. Nothing on this page is
-a run differential, and the runs a team gave up are not stored or shown.
-
-**Team Runs/Game** is total runs scored divided by the number of stored
-completed team-game records for that team-season. One value: the Season Avg
-card, the dashed reference line, and the MLB comparison all read it.
-
-**MLB Runs/Game** is total runs across all persisted team-game records for the
-season divided by the total number of those records — game-weighted, so a club
-that has played more games counts for more. One real MLB game contributes two
-team-game records, one per club, so both sides of the comparison are per-team
-per-game numbers. Nothing assumes 30 teams, 162 games, or any fixed record
-count.
-
-**The MLB average is gated on coverage.** It is shown only when a league-season
-import recorded `COMPLETE` coverage for that season. `INCOMPLETE`, `RUNNING`,
-and a season no league import has touched all show no MLB line and a `vs MLB`
-card reading `—`, never `0.00`. The team's own chart renders in every one of
-those states. `COMPLETE` describes the refresh, not the season, so an
-in-progress season with complete coverage does show a comparison, calculated
-from the games currently stored.
-
-**`vs MLB` is descriptive subtraction.** Positive means the team scored more
-runs per game than MLB overall; negative, fewer. It is not a rank, a
-percentile, a significance test, or a park- or opponent-adjusted figure. See
-[docs/team-runs-visualization.md](docs/team-runs-visualization.md) for the
-formulas and the limitations.
-
-**No re-import is needed.** Unlike batting strikeouts, `runs` has been a
-required non-negative column since the first migration, so every stored
-team-season already has real run totals. This page added no column and no
-migration.
-
-## Team game-level hitting data
-
-Milestone 1 retrieves one normalized batting line per completed regular-season
-game for a selected team and season. The reusable code lives in
-`app/services/team_game_logs.py` and `app/schemas/games.py`.
-
-```python
-from app.services.team_game_logs import get_team_game_batting_lines
-
-lines = get_team_game_batting_lines(team_id=136, season=2025)
-```
-
-### Inspection command (no persistence)
+Import an entire MLB season:
 
 ```bash
-poetry run python scripts/inspect_game_logs.py --team-id 136 --season 2025
-```
-
-Options: `--team-id` and `--season` are required; `--limit N` shows only the
-first N games and `--format json` emits Pydantic-serialized JSON on stdout.
-
-This script calls the live MLB Stats API and is not part of `poetry run pytest`.
-
-### Team-season import (Milestone 2)
-
-Persist one team-season after migrations:
-
-```bash
-poetry run alembic upgrade head
-poetry run python scripts/import_team_season.py --team-id 136 --season 2025
-```
-
-First run on an empty table inserts every fetched game:
-
-```text
-Team: Seattle Mariners
-Season: 2025
-Fetched: 162
-Inserted: 162
-Updated: 0
-Unchanged: 0
-```
-
-A second identical run is idempotent:
-
-```text
-Fetched: 162
-Inserted: 0
-Updated: 0
-Unchanged: 162
-```
-
-JSON output:
-
-```bash
-poetry run python scripts/import_team_season.py \
-  --team-id 136 --season 2025 --format json
-```
-
-**Unique key:** `(team_id, game_pk)` — one row per team per game.
-
-**Upsert behavior:** compare persisted baseball fields; insert new rows, update
-changed rows, leave identical rows untouched (`updated_at` does not change on
-unchanged rows).
-
-**No automatic deletion:** rows already stored but missing from the latest MLB
-response are kept. See `docs/team-season-ingestion.md`.
-
-### League-season import (Milestone 4)
-
-Import every MLB team for one season after migrations:
-
-```bash
-poetry run alembic upgrade head
 poetry run python scripts/import_league_season.py --season 2025
 ```
 
-```text
-MLB League Import — 2025
-Teams discovered: 30
-[ 1/30] Athletics ................. unchanged
-[ 2/30] Los Angeles Angels ........ updated
-...
-[30/30] Washington Nationals ...... inserted
-Season: 2025
-Teams discovered: 30
-Teams succeeded: 30
-Teams failed: 0
-Team-game records fetched: 4860
-Inserted: 0
-Updated: 4860
-Unchanged: 0
-Ingestion coverage: COMPLETE
-```
+League imports record whether every discovered team was refreshed successfully.
+MLB-wide comparison statistics are only presented when the persisted coverage
+state supports describing the stored data as league-wide.
 
-Counts above are illustrative; real values come from the run.
+Imports are idempotent: unchanged rows stay unchanged, changed rows are updated,
+and already-stored rows are not deleted simply because a later upstream response
+omits them.
 
-JSON output, for a future scheduler or deployment tool:
+## Run locally
 
 ```bash
-poetry run python scripts/import_league_season.py --season 2025 --format json
+poetry run uvicorn app.main:app --reload
 ```
 
-With `--format json`, stdout carries only the serialized result. Progress and
-operational errors go to stderr.
+Open:
 
-**Exit codes:** `0` complete coverage, `1` the run could not be carried out
-(invalid season, discovery failure, coverage state not persisted), `2` the run
-finished with at least one failed club.
+```text
+http://127.0.0.1:8000
+```
 
-**Team discovery:** `Mlb.get_teams(sport_id=1, season=<year>)`. No list of
-current team ids is hardcoded anywhere.
+Current routes:
 
-**Team-game records, not games:** one MLB game produces two team batting lines.
-A 30-team, 162-game season is 4,860 team-game records — 2,430 games.
+| Route | Visualization |
+| --- | --- |
+| `/` | Team Hits/Game |
+| `/strikeouts` | Team batting Strikeouts/Game |
+| `/runs` | Team Runs/Game |
+| `/comparison` | Normalized Hits vs batting Strikeouts |
+| `/health` | JSON health check |
 
-**Coverage, not season finality:** `COMPLETE` means every discovered club was
-successfully refreshed by that run. It does not assert the regular season has
-finished being played.
+The chart routes support:
 
-**Partial failure:** clubs that succeeded stay committed; the run is recorded
-`INCOMPLETE` and a rerun is safe and idempotent.
+```text
+team_id=<MLB team id>
+season=<season>
+window=5|10|15|30
+```
 
-**Not connected to the web app:** loading a page never triggers an import, and
-no admin ingestion route was added.
+Example:
 
-Live MLB access was unavailable in the environment this milestone was built in,
-so the 2025 import was not run against the real API. See
-`docs/league-season-ingestion.md` for what that leaves unverified.
+```text
+http://127.0.0.1:8000/comparison?team_id=136&season=2025&window=15
+```
 
-### Selected retrieval strategy
+## Statistics and interpretation
 
-Team hitting `gameLog` splits joined on `gamePk` with a single team schedule
-request. See `docs/team-game-data-spike.md` for the full investigation.
+### Rolling averages
 
-### Cross-source validation
+Rolling values are trailing averages that include the current game. Before a
+full window exists, the application uses every completed game available so far.
 
-The batting numbers come from the game log and the game context comes from the
-schedule. Disagreements raise `TeamGameDataError`.
+### MLB comparisons
 
-### Edge cases and limitations
+League averages are game-weighted over persisted team-game records, not an
+unweighted mean of team averages. League statistics are shown only when the
+stored league-season ingestion state indicates complete coverage.
 
-Same as Milestone 1 (completed states, doubleheaders, postponements, etc.).
+A `COMPLETE` refresh does **not** mean the baseball season has ended. It means
+every discovered club was successfully refreshed for that import run.
+
+### Batting strikeouts
+
+Strikeouts shown by this application are **batting strikeouts** by the selected
+team's hitters, not pitching strikeouts.
+
+Batting K/Game is a per-game count, not K%. Plate appearances are not currently
+persisted, so the application does not estimate K%.
+
+### Normalized comparison
+
+The comparison page puts two different statistics on a common scale:
+
+```text
+Hits Index = rolling team Hits/Game / MLB Hits/Game * 100
+
+Batting Strikeout Index = rolling team batting K/Game
+                          / MLB batting K/Game
+                          * 100
+```
+
+`100` means MLB average for that metric. Above 100 means more of the named
+statistic than MLB average; it does not automatically mean better performance.
+
+The displayed Trend Gap is:
+
+```text
+recent Hits Index - recent Batting Strikeout Index
+```
+
+It is descriptive arithmetic, not a validated overall offensive-performance
+metric, ranking, percentile, significance test, or causal claim.
+
+## Architecture
+
+```text
+MLB Stats API
+    ↓
+python-mlb-statsapi
+    ↓
+services / normalization
+    ↓
+domain schemas
+    ↓
+repositories / SQLite
+    ↓
+analytics
+    ↓
+FastAPI + Jinja2 + Plotly
+    ↓
+browser
+```
+
+Key rules:
+
+- Browser requests are database-only.
+- MLB network access belongs to explicit ingestion workflows.
+- Baseball calculations live in analytics, not routes or repositories.
+- Routes stay thin and server-rendered.
+- Missing data is treated as unknown rather than silently converted to zero.
+- League completeness is persisted explicitly rather than inferred from row counts.
+
+See [`AGENTS.md`](AGENTS.md) for the project architecture and contribution rules.
+
+## Project layout
+
+```text
+app/
+├── analytics/        # baseball calculations
+├── database/         # SQLAlchemy models, repositories, engine
+├── schemas/          # typed domain and analytics contracts
+├── services/         # MLB retrieval, normalization, ingestion
+└── web/              # FastAPI routes, Plotly figures, templates, static assets
+
+scripts/              # operational import / inspection commands
+docs/                 # design and statistical documentation
+alembic/              # database migrations
+tests/                # offline deterministic tests
+```
 
 ## Testing
+
+Run the full suite:
 
 ```bash
 poetry run pytest
 ```
 
-The suite is fully offline. Migration and repository tests use temporary SQLite
-files and real Alembic upgrades.
+The automated test suite is designed to run without live MLB network access.
 
-## Lint and formatting
+Lint and formatting:
 
 ```bash
 poetry run ruff check .
@@ -443,123 +265,19 @@ poetry run ruff format .
 poetry run ruff format --check .
 ```
 
-## Project structure
+## Documentation
 
-```text
-.
-├── alembic/
-│   ├── versions/
-│   │   └── 166b6424e4f9_create_team_game_batting_lines.py
-│   ├── env.py
-│   └── script.py.mako
-├── alembic.ini
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── config.py
-│   ├── analytics/
-│   │   ├── __init__.py
-│   │   └── team_hitting.py
-│   ├── database/
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   ├── engine.py
-│   │   ├── models.py
-│   │   └── repositories.py
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   ├── analytics.py
-│   │   ├── catalog.py
-│   │   ├── games.py
-│   │   ├── ingestion.py
-│   │   └── teams.py
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── league_season_ingestion.py
-│   │   ├── league_teams.py
-│   │   ├── team_game_logs.py
-│   │   └── team_season_ingestion.py
-│   └── web/
-│       ├── __init__.py
-│       ├── charts.py
-│       ├── dependencies.py
-│       ├── errors.py
-│       ├── formatting.py
-│       ├── routes.py
-│       ├── selection.py
-│       ├── static/
-│       │   ├── css/
-│       │   │   └── app.css
-│       │   └── js/
-│       │       └── season-selector.js
-│       └── templates/
-│           ├── base.html
-│           ├── error.html
-│           ├── index.html
-│           ├── runs.html
-│           └── strikeouts.html
-├── scripts/
-│   ├── import_league_season.py
-│   ├── inspect_game_logs.py
-│   └── import_team_season.py
-├── docs/
-│   ├── league-season-ingestion.md
-│   ├── team-game-data-spike.md
-│   ├── team-hits-visualization.md
-│   ├── team-runs-visualization.md
-│   ├── team-season-ingestion.md
-│   ├── team-strikeouts-visualization.md
-│   └── team-vs-mlb-comparison.md
-├── tests/
-│   ├── conftest.py
-│   ├── factories.py
-│   ├── fixtures/
-│   │   └── team_game_logs/
-│   ├── test_analytics_league_hitting.py
-│   ├── test_analytics_schemas.py
-│   ├── test_analytics_team_hitting.py
-│   ├── test_charts.py
-│   ├── test_formatting.py
-│   ├── test_game_schemas.py
-│   ├── test_import_league_season.py
-│   ├── test_import_team_season.py
-│   ├── test_ingestion_schemas.py
-│   ├── test_league_season_ingestion.py
-│   ├── test_league_teams.py
-│   ├── test_migrations.py
-│   ├── test_repositories.py
-│   ├── test_repositories_catalog.py
-│   ├── test_repositories_league.py
-│   ├── test_repositories_league_season.py
-│   ├── test_selection.py
-│   ├── test_team_game_logs.py
-│   ├── test_team_season_ingestion.py
-│   ├── test_web.py
-│   └── test_web_league_comparison.py
-├── .github/
-│   └── workflows/
-│       └── test.yml
-├── .env.example
-├── .gitignore
-├── poetry.lock
-├── pyproject.toml
-└── README.md
-```
+More detailed implementation and statistical notes live in [`docs/`](docs/),
+including:
 
-## Later milestones
-
-Milestone 5 delivered the MLB hits-per-game comparison the Milestone 4 coverage
-state unblocked, gated on that state exactly as planned. See
-[docs/team-vs-mlb-comparison.md](docs/team-vs-mlb-comparison.md).
-
-Issue #23 extended the same comparison to batting strikeouts, and issue #24
-added the runs page with it. All three read one shared coverage rule, so they
-cannot disagree about whether a season may be described as MLB-wide.
-
-Still unimplemented, and each needing its own definition before it is drawn:
-league rank, percentiles, and normalized indexes. Any of them must check a
-season's stored ingestion coverage before presenting a league statistic, the
-way the existing comparisons do.
+- [Team hits visualization](docs/team-hits-visualization.md)
+- [Team batting strikeouts visualization](docs/team-strikeouts-visualization.md)
+- [Team runs visualization](docs/team-runs-visualization.md)
+- [Team vs MLB comparison](docs/team-vs-mlb-comparison.md)
+- [Normalized hitting trends comparison](docs/team-hitting-trends-comparison.md)
+- [League-season ingestion](docs/league-season-ingestion.md)
+- [Team-season ingestion](docs/team-season-ingestion.md)
+- [Team game data investigation](docs/team-game-data-spike.md)
 
 ## Disclaimer
 
