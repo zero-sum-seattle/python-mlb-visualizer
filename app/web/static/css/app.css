@@ -39,13 +39,13 @@ body {
   line-height: 1.5;
 }
 
-/* The page shell is wide on purpose: the chart is the content, and a narrow
-   column wasted horizontal space that a season-long series can use. */
+/* The shell spans the window rather than centring in a fixed column: the
+   chart is the content, and a season-long series uses every pixel it is
+   given. Reading measure is protected on the panels that hold prose. */
 .shell {
   width: 100%;
-  max-width: 92rem;
   margin: 0 auto;
-  padding: 0 2rem;
+  padding: 0 2.5rem;
 }
 
 /* Header */
