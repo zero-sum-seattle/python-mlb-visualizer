@@ -7,10 +7,15 @@ from pydantic import ValidationError
 
 from app.schemas.analytics import (
     LeagueHitsContext,
+    LeagueRunsContext,
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamHitsPoint,
     TeamHitsSummary,
+    TeamRunsAnalysis,
+    TeamRunsLeagueComparison,
+    TeamRunsPoint,
+    TeamRunsSummary,
     TeamStrikeoutsAnalysis,
     TeamStrikeoutsPoint,
     TeamStrikeoutsSummary,
@@ -335,3 +340,192 @@ def test_comparison_allows_a_negative_difference() -> None:
         difference_vs_mlb=7.0 - 39852 / 4860,
     )
     assert comparison.difference_vs_mlb < 0
+
+
+# ------------------------------------------------------------ runs schemas
+
+
+def make_runs_point(**overrides: object) -> TeamRunsPoint:
+    base: dict[str, object] = {
+        "game_pk": 776000,
+        "game_number": 1,
+        "season_game_number": 1,
+        "game_date": date(2025, 3, 27),
+        "opponent_name": "Minnesota Twins",
+        "home_away": "home",
+        "runs": 4,
+        "rolling_average": 4.0,
+    }
+    base.update(overrides)
+    return TeamRunsPoint(**base)
+
+
+def make_runs_summary(**overrides: object) -> TeamRunsSummary:
+    base: dict[str, object] = {
+        "games_played": 1,
+        "season_average": 4.0,
+        "recent_average": 4.0,
+    }
+    base.update(overrides)
+    return TeamRunsSummary(**base)
+
+
+def make_runs_analysis(**overrides: object) -> TeamRunsAnalysis:
+    base: dict[str, object] = {
+        "team_id": 136,
+        "team_name": "Seattle Mariners",
+        "season": 2025,
+        "rolling_window": 15,
+        "points": (make_runs_point(),),
+        "summary": make_runs_summary(),
+    }
+    base.update(overrides)
+    return TeamRunsAnalysis(**base)
+
+
+def make_runs_context(**overrides: object) -> LeagueRunsContext:
+    base: dict[str, object] = {
+        "season": 2025,
+        "teams_represented": 2,
+        "team_game_records": 10,
+        "total_runs": 45,
+        "runs_per_game": 4.5,
+    }
+    base.update(overrides)
+    return LeagueRunsContext(**base)
+
+
+def test_valid_runs_analysis_is_accepted() -> None:
+    assert make_runs_analysis().summary.season_average == 4.0
+
+
+def test_a_shutout_is_valid_on_a_runs_point() -> None:
+    assert make_runs_point(runs=0).runs == 0
+
+
+def test_negative_runs_are_rejected_on_a_point() -> None:
+    with pytest.raises(ValidationError):
+        make_runs_point(runs=-1)
+
+
+def test_runs_point_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        make_runs_point(hits=8)
+
+
+def test_runs_point_is_immutable() -> None:
+    point = make_runs_point()
+    with pytest.raises(ValidationError):
+        point.runs = 9  # type: ignore[misc]
+
+
+def test_runs_prior_window_fields_must_agree() -> None:
+    with pytest.raises(ValidationError, match="must both be"):
+        make_runs_summary(prior_window_average=3.0)
+    with pytest.raises(ValidationError, match="must both be"):
+        make_runs_summary(change_vs_prior_window=1.0)
+
+
+def test_runs_prior_window_fields_may_both_be_present() -> None:
+    summary = make_runs_summary(prior_window_average=3.0, change_vs_prior_window=1.0)
+    assert summary.change_vs_prior_window == 1.0
+
+
+def test_runs_change_may_be_negative() -> None:
+    """Scoring less than the previous window is a real result, not invalid."""
+    summary = make_runs_summary(prior_window_average=6.0, change_vs_prior_window=-2.0)
+    assert summary.change_vs_prior_window == -2.0
+
+
+def test_runs_summary_must_match_the_number_of_points() -> None:
+    with pytest.raises(ValidationError, match="games_played"):
+        make_runs_analysis(summary=make_runs_summary(games_played=2))
+
+
+def test_runs_analysis_requires_at_least_one_point() -> None:
+    with pytest.raises(ValidationError):
+        make_runs_analysis(points=())
+
+
+def test_runs_analysis_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        make_runs_analysis(league_average=4.4)
+
+
+def test_runs_analysis_last_game_date_is_the_final_point() -> None:
+    analysis = make_runs_analysis(
+        points=(
+            make_runs_point(),
+            make_runs_point(
+                game_pk=776001,
+                season_game_number=2,
+                game_date=date(2025, 3, 28),
+            ),
+        ),
+        summary=make_runs_summary(games_played=2),
+    )
+    assert analysis.last_game_date == date(2025, 3, 28)
+
+
+def test_runs_context_accepts_consistent_totals() -> None:
+    assert make_runs_context().runs_per_game == 4.5
+
+
+def test_runs_context_rejects_an_average_that_disagrees_with_its_totals() -> None:
+    with pytest.raises(ValidationError, match="runs_per_game"):
+        make_runs_context(runs_per_game=9.9)
+
+
+def test_runs_context_rejects_more_teams_than_records() -> None:
+    with pytest.raises(ValidationError, match="teams_represented"):
+        make_runs_context(teams_represented=30)
+
+
+def test_runs_context_requires_at_least_one_record() -> None:
+    with pytest.raises(ValidationError):
+        make_runs_context(team_game_records=0, total_runs=0, runs_per_game=0.0)
+
+
+def test_runs_context_is_immutable_and_closed() -> None:
+    context = make_runs_context()
+    with pytest.raises(ValidationError):
+        context.runs_per_game = 1.0  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        make_runs_context(mlb_games=2430)
+
+
+def test_runs_comparison_rejects_a_difference_that_does_not_subtract() -> None:
+    """The page cannot be handed a difference nothing in it produced."""
+    with pytest.raises(ValidationError, match="difference_vs_mlb"):
+        TeamRunsLeagueComparison(
+            team_id=136,
+            team_name="Seattle Mariners",
+            season=2025,
+            team_runs_per_game=5.0,
+            league=make_runs_context(),
+            difference_vs_mlb=2.0,
+        )
+
+
+def test_runs_comparison_rejects_a_league_context_from_another_season() -> None:
+    with pytest.raises(ValidationError, match="season"):
+        TeamRunsLeagueComparison(
+            team_id=136,
+            team_name="Seattle Mariners",
+            season=2026,
+            team_runs_per_game=5.0,
+            league=make_runs_context(season=2025),
+            difference_vs_mlb=0.5,
+        )
+
+
+def test_runs_comparison_allows_a_negative_difference() -> None:
+    comparison = TeamRunsLeagueComparison(
+        team_id=136,
+        team_name="Seattle Mariners",
+        season=2025,
+        team_runs_per_game=4.0,
+        league=make_runs_context(),
+        difference_vs_mlb=-0.5,
+    )
+    assert comparison.difference_vs_mlb == -0.5

@@ -17,6 +17,11 @@ from app.analytics.league_hitting import (
     compare_team_hits_to_league,
     supports_league_wide_average,
 )
+from app.analytics.league_runs import (
+    build_league_runs_context,
+    compare_team_runs_to_league,
+    supports_league_wide_runs_average,
+)
 from app.analytics.league_strikeouts import (
     MissingLeagueStrikeoutDataError,
     build_league_strikeouts_context,
@@ -24,6 +29,7 @@ from app.analytics.league_strikeouts import (
     supports_league_wide_strikeout_average,
 )
 from app.analytics.team_hitting import DEFAULT_ROLLING_WINDOW, build_team_hits_analysis
+from app.analytics.team_runs import build_team_runs_analysis
 from app.analytics.team_strikeouts import (
     MissingStrikeoutDataError,
     build_team_strikeouts_analysis,
@@ -40,12 +46,16 @@ from app.database.repositories import (
 from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
+    TeamRunsAnalysis,
+    TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
     TeamStrikeoutsLeagueComparison,
 )
 from app.web.charts import (
+    RUNS_CHART_DIV_ID,
     STRIKEOUTS_CHART_DIV_ID,
     build_team_hits_figure,
+    build_team_runs_figure,
     build_team_strikeouts_figure,
     plotly_bundle_javascript,
     render_figure_html,
@@ -53,14 +63,21 @@ from app.web.charts import (
 )
 from app.web.dependencies import get_db_session
 from app.web.formatting import (
+    build_runs_summary_cards,
     build_strikeout_summary_cards,
     build_summary_cards,
     format_league_comparison_note,
+    format_league_runs_note,
     format_league_strikeouts_backfill_note,
     format_league_strikeouts_note,
     format_long_date,
 )
-from app.web.navigation import HITS_PATH, STRIKEOUTS_PATH, build_nav_links
+from app.web.navigation import (
+    HITS_PATH,
+    RUNS_PATH,
+    STRIKEOUTS_PATH,
+    build_nav_links,
+)
 from app.web.selection import (
     build_team_options,
     build_team_seasons_catalog,
@@ -372,6 +389,111 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             request=request, name="strikeouts.html", context=context
         )
 
+    @router.get(RUNS_PATH, response_class=HTMLResponse)
+    def runs(
+        request: Request,
+        session: Annotated[Session, Depends(get_db_session)],
+        team_id: Annotated[
+            int | None,
+            Query(gt=0, description="MLB team id that has been imported locally."),
+        ] = None,
+        season: Annotated[
+            int | None,
+            Query(gt=0, description="Season that has been imported for the team."),
+        ] = None,
+        window: Annotated[
+            RollingWindowParam,
+            Query(description="Games in the trailing rolling average."),
+        ] = DEFAULT_ROLLING_WINDOW,
+    ) -> Response:
+        """Render run-scoring trends for one persisted team-season."""
+        try:
+            available = list_available_team_seasons(session)
+        except DatabaseSchemaMissingError as exc:
+            return _render_schema_error(templates, request, settings, exc)
+
+        teams = build_team_options(available)
+        context: dict[str, Any] = {
+            "app_name": settings.app_name,
+            "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
+            "window_options": ROLLING_WINDOW_OPTIONS,
+            "selected_window": window,
+            "selected_team": None,
+            "selected_season": None,
+            "import_command": IMPORT_COMMAND,
+            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
+            "form_action": RUNS_PATH,
+            "nav_links": build_nav_links(
+                current_path=RUNS_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
+        }
+
+        if not teams:
+            context["state"] = "empty"
+            return templates.TemplateResponse(
+                request=request, name="runs.html", context=context
+            )
+
+        selected_team = select_team(teams, team_id)
+        if selected_team is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No games are stored for team id {team_id}. "
+                "Pick a team that has been imported, or import that team."
+            )
+            return templates.TemplateResponse(
+                request=request, name="runs.html", context=context, status_code=404
+            )
+
+        context["selected_team"] = selected_team
+        selected_season = select_season(selected_team, season)
+        if selected_season is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No {season} games are stored for {selected_team.team_name}. "
+                f"Stored seasons: "
+                f"{', '.join(str(value) for value in selected_team.seasons)}."
+            )
+            return templates.TemplateResponse(
+                request=request, name="runs.html", context=context, status_code=404
+            )
+
+        context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=RUNS_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
+        games = list_team_season(
+            session, team_id=selected_team.team_id, season=selected_season
+        )
+        analysis = build_team_runs_analysis(games, rolling_window=window)
+        league_comparison = _load_league_runs_comparison(session, analysis)
+        figure = build_team_runs_figure(analysis, league_comparison)
+
+        context.update(
+            {
+                "state": "ok",
+                "analysis": analysis,
+                "chart_html": render_figure_html(figure, div_id=RUNS_CHART_DIV_ID),
+                "rolling_average_label": rolling_average_trace_name(window),
+                "summary_cards": build_runs_summary_cards(analysis, league_comparison),
+                "league_comparison": league_comparison,
+                "league_comparison_note": format_league_runs_note(league_comparison),
+                "data_through": format_long_date(analysis.last_game_date),
+            }
+        )
+        return templates.TemplateResponse(
+            request=request, name="runs.html", context=context
+        )
+
     @router.get(PLOTLY_BUNDLE_PATH, include_in_schema=False)
     def plotly_bundle() -> Response:
         """Serve the plotly.js bundle from the installed package.
@@ -447,6 +569,34 @@ def _load_league_strikeouts_comparison(
     league_games = list_league_season(session, season=analysis.season)
     league = build_league_strikeouts_context(league_games)
     return compare_team_strikeouts_to_league(analysis, league)
+
+
+def _load_league_runs_comparison(
+    session: Session,
+    analysis: TeamRunsAnalysis,
+) -> TeamRunsLeagueComparison | None:
+    """Read MLB run-scoring context, or None when it is not earned.
+
+    The completeness rule and the formula both live in
+    ``app.analytics.league_runs``; this only wires the persisted coverage state
+    and the persisted season to them. A season without complete coverage simply
+    yields None, and the team's own page renders exactly as it would without
+    any MLB context.
+
+    Runs need no equivalent of the batting strikeout backfill path: ``runs`` is
+    required on every persisted team-game record, so a covered season cannot be
+    holding unknown totals.
+
+    The season query cannot come back empty here: the analysis was built from
+    games stored for this season, so those rows are part of what it returns.
+    """
+    coverage = get_league_season_ingestion(session, season=analysis.season)
+    if not supports_league_wide_runs_average(coverage):
+        return None
+
+    league_games = list_league_season(session, season=analysis.season)
+    league = build_league_runs_context(league_games)
+    return compare_team_runs_to_league(analysis, league)
 
 
 def _render_schema_error(

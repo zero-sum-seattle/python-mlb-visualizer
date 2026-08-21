@@ -3,11 +3,11 @@
 Kept out of the route so the figure contract can be tested without HTTP and so
 the route stays about request handling.
 
-The hits and batting strikeout figures are built by separate functions that
-share only the rendering helpers below. They look alike, but a single
+The hits, batting strikeout, and runs figures are built by separate functions
+that share only the rendering helpers below. They look alike, but a single
 parameterized builder would have to encode which labels, colours, and axis
-semantics belong to which statistic, which is harder to read than two explicit
-builders.
+semantics belong to which statistic, which is harder to read than three
+explicit builders.
 """
 
 from datetime import date
@@ -20,6 +20,8 @@ from plotly.offline import get_plotlyjs
 from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
+    TeamRunsAnalysis,
+    TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
     TeamStrikeoutsLeagueComparison,
 )
@@ -40,6 +42,12 @@ STRIKEOUTS_CHART_DIV_ID = "team-strikeouts-chart"
 # whether these are strikeouts by the team's hitters or by its pitchers.
 RAW_STRIKEOUTS_TRACE_NAME = "Game Strikeouts"
 STRIKEOUTS_Y_AXIS_TITLE = "Batting Strikeouts per Game"
+
+RUNS_CHART_DIV_ID = "team-runs-chart"
+# Runs scored by the selected team. "Scored" is carried through the axis title
+# so a per-game run number cannot be read as runs allowed or as a differential.
+RAW_RUNS_TRACE_NAME = "Game Runs"
+RUNS_Y_AXIS_TITLE = "Runs Scored per Game"
 
 _NAVY = "#12263f"
 _TEAL = "#0f8b8d"
@@ -442,6 +450,169 @@ def build_team_strikeouts_figure(
             "zeroline": False,
             # Starts at zero like the hits chart, and grows with the data. No
             # fixed maximum: a team that strikes out 20 times must still fit.
+            "rangemode": "tozero",
+            "tickformat": "d",
+            "dtick": 2,
+            "automargin": True,
+        },
+    )
+    return figure
+
+
+def build_team_runs_figure(
+    analysis: TeamRunsAnalysis,
+    league_comparison: TeamRunsLeagueComparison | None = None,
+) -> go.Figure:
+    """Build the runs-per-game figure for one team-season.
+
+    ``league_comparison`` adds a fourth trace, a horizontal MLB reference line,
+    drawn in the same amber dotted style the hits and batting strikeout charts
+    use so the three pages read as one application. It is optional: a season
+    without complete league coverage has no MLB average to draw, and the team's
+    own chart must still render.
+    """
+    game_numbers = [point.season_game_number for point in analysis.points]
+    game_dates = [point.game_date for point in analysis.points]
+    runs = [point.runs for point in analysis.points]
+    rolling = [point.rolling_average for point in analysis.points]
+    # Each hover box shows date, matchup, runs, and rolling average regardless
+    # of which trace the pointer is over.
+    hover_data = [
+        (
+            format_long_date(point.game_date),
+            format_matchup(point.opponent_name, point.home_away),
+            point.runs,
+            point.rolling_average,
+        )
+        for point in analysis.points
+    ]
+    rolling_name = rolling_average_trace_name(analysis.rolling_window)
+    hover_template = (
+        "<b>%{customdata[0]}</b><br>"
+        "%{customdata[1]}<br>"
+        "Runs: %{customdata[2]}<br>"
+        f"{analysis.rolling_window}-Game Avg: "
+        "%{customdata[3]:.2f}<extra></extra>"
+    )
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=runs,
+            customdata=hover_data,
+            name=RAW_RUNS_TRACE_NAME,
+            mode="lines+markers",
+            line={"color": _RAW_LINE, "width": 1.2},
+            # Open circles: the game markers sit on top of each other in a
+            # 162-game season, and an outline stays readable where filled
+            # dots merge into a blob.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
+            hovertemplate=hover_template,
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=rolling,
+            customdata=hover_data,
+            name=rolling_name,
+            mode="lines",
+            # Straight segments between calculated points. A spline would
+            # overshoot between games and imply averages nobody calculated.
+            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
+            hovertemplate=hover_template,
+        )
+    )
+    season_average = analysis.summary.season_average
+    figure.add_trace(
+        go.Scatter(
+            x=[game_numbers[0], game_numbers[-1]],
+            y=[season_average, season_average],
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+            mode="lines",
+            line={"color": _NAVY, "width": 2, "dash": "dash"},
+            hoverinfo="skip",
+        )
+    )
+    if league_comparison is not None:
+        mlb_average = league_comparison.league.runs_per_game
+        figure.add_trace(
+            go.Scatter(
+                x=[game_numbers[0], game_numbers[-1]],
+                y=[mlb_average, mlb_average],
+                name=MLB_AVERAGE_TRACE_NAME,
+                mode="lines",
+                line={"color": _AMBER, "width": 2, "dash": "dot"},
+                hoverinfo="skip",
+            )
+        )
+
+    # Only one of the two horizontal lines is labelled. They can sit within a
+    # tenth of a run of each other, and two labels there would overlap.
+    if league_comparison is None:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=season_average,
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+        )
+    else:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=league_comparison.league.runs_per_game,
+            name=MLB_AVERAGE_TRACE_NAME,
+        )
+
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
+    figure.update_layout(
+        template="plotly_white",
+        margin=_MARGIN,
+        height=470,
+        hovermode="closest",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
+        },
+        xaxis={
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            # Only the horizontal gridlines are drawn: they are what a reader
+            # measures a value against, and vertical lines only add noise.
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
+            "zeroline": False,
+            "rangemode": "tozero",
+            "automargin": True,
+        },
+        yaxis={
+            "title": {
+                "text": RUNS_Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
+            "gridcolor": _GRID,
+            "griddash": "dot",
+            "zeroline": False,
+            # Starts at zero like the other charts, and grows with the data. No
+            # fixed maximum: a 20-run blowout must still fit.
             "rangemode": "tozero",
             "tickformat": "d",
             "dtick": 2,

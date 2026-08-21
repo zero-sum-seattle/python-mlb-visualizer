@@ -49,6 +49,12 @@ shown only when Milestone 4 recorded `COMPLETE` league coverage for the
 selected season. See
 [docs/team-vs-mlb-comparison.md](docs/team-vs-mlb-comparison.md).
 
+Issue #24 adds a third metric page: a team's runs scored per game, with the same
+rolling average, season average, and MLB comparison the other pages carry. Runs
+have been persisted as a required column since Milestone 2, so no new MLB
+request, column, or migration was needed. See
+[docs/team-runs-visualization.md](docs/team-runs-visualization.md).
+
 ## Planned MVP
 
 A local web application that:
@@ -135,6 +141,7 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 - `/` — team hitting trends (hits per game)
 - `/strikeouts` — team batting strikeout trends
+- `/runs` — team run scoring trends (runs scored per game)
 - `/health` — JSON health check
 
 ## Team hitting trends page
@@ -227,6 +234,53 @@ first re-import counts those rows as **updated**; running it again against
 unchanged MLB data counts them as **unchanged**.
 
 The hits page keeps working normally throughout, before and after the backfill.
+
+## Team run scoring trends page
+
+`/runs` charts one team's **runs scored** per game for one season, with a
+trailing rolling average, the team's season average, and — when league coverage
+allows — an MLB average.
+
+```text
+http://127.0.0.1:8000/runs?team_id=136&season=2025&window=15
+```
+
+It takes the same `team_id`, `season`, and `window` parameters as the other
+metric pages, with the same defaults, and the navigation carries the current
+selection between all three. `/` and `/strikeouts` are unchanged.
+
+**Runs scored, not runs allowed.** Every label says so. Nothing on this page is
+a run differential, and the runs a team gave up are not stored or shown.
+
+**Team Runs/Game** is total runs scored divided by the number of stored
+completed team-game records for that team-season. One value: the Season Avg
+card, the dashed reference line, and the MLB comparison all read it.
+
+**MLB Runs/Game** is total runs across all persisted team-game records for the
+season divided by the total number of those records — game-weighted, so a club
+that has played more games counts for more. One real MLB game contributes two
+team-game records, one per club, so both sides of the comparison are per-team
+per-game numbers. Nothing assumes 30 teams, 162 games, or any fixed record
+count.
+
+**The MLB average is gated on coverage.** It is shown only when a league-season
+import recorded `COMPLETE` coverage for that season. `INCOMPLETE`, `RUNNING`,
+and a season no league import has touched all show no MLB line and a `vs MLB`
+card reading `—`, never `0.00`. The team's own chart renders in every one of
+those states. `COMPLETE` describes the refresh, not the season, so an
+in-progress season with complete coverage does show a comparison, calculated
+from the games currently stored.
+
+**`vs MLB` is descriptive subtraction.** Positive means the team scored more
+runs per game than MLB overall; negative, fewer. It is not a rank, a
+percentile, a significance test, or a park- or opponent-adjusted figure. See
+[docs/team-runs-visualization.md](docs/team-runs-visualization.md) for the
+formulas and the limitations.
+
+**No re-import is needed.** Unlike batting strikeouts, `runs` has been a
+required non-negative column since the first migration, so every stored
+team-season already has real run totals. This page added no column and no
+migration.
 
 ## Team game-level hitting data
 
@@ -441,7 +495,9 @@ poetry run ruff format --check .
 │       └── templates/
 │           ├── base.html
 │           ├── error.html
-│           └── index.html
+│           ├── index.html
+│           ├── runs.html
+│           └── strikeouts.html
 ├── scripts/
 │   ├── import_league_season.py
 │   ├── inspect_game_logs.py
@@ -450,7 +506,9 @@ poetry run ruff format --check .
 │   ├── league-season-ingestion.md
 │   ├── team-game-data-spike.md
 │   ├── team-hits-visualization.md
+│   ├── team-runs-visualization.md
 │   ├── team-season-ingestion.md
+│   ├── team-strikeouts-visualization.md
 │   └── team-vs-mlb-comparison.md
 ├── tests/
 │   ├── conftest.py
@@ -494,10 +552,14 @@ Milestone 5 delivered the MLB hits-per-game comparison the Milestone 4 coverage
 state unblocked, gated on that state exactly as planned. See
 [docs/team-vs-mlb-comparison.md](docs/team-vs-mlb-comparison.md).
 
+Issue #23 extended the same comparison to batting strikeouts, and issue #24
+added the runs page with it. All three read one shared coverage rule, so they
+cannot disagree about whether a season may be described as MLB-wide.
+
 Still unimplemented, and each needing its own definition before it is drawn:
-league rank, percentiles, normalized indexes, and a league comparison for
-batting strikeouts. Any of them must check a season's stored ingestion coverage
-before presenting a league statistic, the way the hits comparison does.
+league rank, percentiles, and normalized indexes. Any of them must check a
+season's stored ingestion coverage before presenting a league statistic, the
+way the existing comparisons do.
 
 ## Disclaimer
 

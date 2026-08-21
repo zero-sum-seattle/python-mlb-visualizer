@@ -1,9 +1,9 @@
 """Links between the metric pages, keeping the reader's selection intact.
 
-Moving from hits to batting strikeouts should not throw away the team, season,
-and rolling window the reader chose, so each link carries them forward. Only
-selections that are actually set are added, so a page that has no team yet
-links to a plain path rather than one with empty parameters.
+Moving between hits, batting strikeouts, and runs should not throw away the
+team, season, and rolling window the reader chose, so each link carries them
+forward. Only selections that are actually set are added, so a page that has no
+team yet links to a plain path rather than one with empty parameters.
 """
 
 from dataclasses import dataclass
@@ -11,9 +11,11 @@ from urllib.parse import urlencode
 
 HITS_PATH = "/"
 STRIKEOUTS_PATH = "/strikeouts"
+RUNS_PATH = "/runs"
 
 HITS_LABEL = "Hits"
 STRIKEOUTS_LABEL = "Batting Strikeouts"
+RUNS_LABEL = "Runs"
 
 
 @dataclass(frozen=True)
@@ -32,7 +34,7 @@ def build_nav_links(
     season: int | None = None,
     window: int | None = None,
 ) -> list[NavLink]:
-    """Build the navigation for both metric pages, preserving the selection."""
+    """Build the navigation for every metric page, preserving the selection."""
     selection: dict[str, int] = {}
     if team_id is not None:
         selection["team_id"] = team_id
@@ -53,5 +55,10 @@ def build_nav_links(
             label=STRIKEOUTS_LABEL,
             href=f"{STRIKEOUTS_PATH}{suffix}",
             is_current=current_path == STRIKEOUTS_PATH,
+        ),
+        NavLink(
+            label=RUNS_LABEL,
+            href=f"{RUNS_PATH}{suffix}",
+            is_current=current_path == RUNS_PATH,
         ),
     ]
