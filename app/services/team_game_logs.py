@@ -1,11 +1,11 @@
 """Retrieve and normalize a team's game-level hitting results.
 
 Hitting numbers come from the team ``gameLog`` hitting stat type, which returns
-one split per played game in a single request. Hits, runs, and batting
-strikeouts all arrive in that same split, so no additional MLB request is made
-for any of them. Game context that the stat split does not carry (status,
-opponent name, game number, scheduled innings) comes from a single team
-schedule request and is joined on ``gamePk``.
+one split per played game in a single request. Hits, runs, batting strikeouts,
+walks, and hit-by-pitch all arrive in that same split, so no additional MLB
+request is made for any of them. Game context that the stat split does not
+carry (status, opponent name, game number, scheduled innings) comes from a
+single team schedule request and is joined on ``gamePk``.
 
 The two sources overlap on team, opponent, home/away, date, and runs. That
 overlap is validated for every game rather than assumed, so an upstream or
@@ -378,6 +378,12 @@ def _normalize_batting_line(
             hits=split.stat.hits,
             runs=split.stat.runs,
             strikeouts=_require_batting_strikeouts(split, context),
+            base_on_balls=_require_nonnegative_stat(
+                split.stat.base_on_balls, field="baseOnBalls", context=context
+            ),
+            hit_by_pitch=_require_nonnegative_stat(
+                split.stat.hit_by_pitch, field="hitByPitch", context=context
+            ),
             status=status,
             game_number=scheduled.game_number,
             doubleheader=scheduled.double_header != "N",
@@ -413,6 +419,24 @@ def _require_batting_strikeouts(split: HittingGameLog, context: str) -> int:
             f"Batting strikeouts (strikeOuts) {strikeouts} is negative for {context}"
         )
     return strikeouts
+
+
+def _require_nonnegative_stat(value: object, *, field: str, context: str) -> int:
+    """Return one integer hitting stat for a game, or refuse the record.
+
+    Shared by ``base_on_balls`` and ``hit_by_pitch``: both are optional on the
+    upstream model, and a completed game with no value means the payload
+    changed or is incomplete, not that the value was really zero.
+    """
+    if value is None:
+        raise TeamGameDataError(f"No {field} in the hitting game log for {context}")
+    # ``bool`` is an ``int`` subclass, so it is rejected explicitly rather than
+    # being counted as 0 or 1.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TeamGameDataError(f"{field} {value!r} is not an integer for {context}")
+    if value < 0:
+        raise TeamGameDataError(f"{field} {value} is negative for {context}")
+    return value
 
 
 def _resolve_sides(

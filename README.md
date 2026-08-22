@@ -16,6 +16,7 @@ Normal browser requests do **not** call the MLB Stats API.
 - Team Hits/Game trends with rolling and season averages
 - Team batting Strikeouts/Game trends
 - Team Runs/Game trends
+- Team Baserunners/Game trends (hits + walks + hit-by-pitch)
 - MLB-wide per-game comparisons when league coverage is trustworthy
 - Normalized Hits vs batting Strikeouts comparison with MLB average = 100
 - Team, season, and rolling-window selectors with shareable URLs
@@ -135,6 +136,7 @@ Current routes:
 | `/` | Team Hits/Game |
 | `/strikeouts` | Team batting Strikeouts/Game |
 | `/runs` | Team Runs/Game |
+| `/baserunners` | Team Baserunners/Game |
 | `/comparison` | Normalized Hits vs batting Strikeouts |
 | `/health` | JSON health check |
 
@@ -317,6 +319,7 @@ including:
 - [Team hits visualization](docs/team-hits-visualization.md)
 - [Team batting strikeouts visualization](docs/team-strikeouts-visualization.md)
 - [Team runs visualization](docs/team-runs-visualization.md)
+- [Team baserunners visualization](docs/team-baserunners-visualization.md)
 - [Team vs MLB comparison](docs/team-vs-mlb-comparison.md)
 - [Normalized hitting trends comparison](docs/team-hitting-trends-comparison.md)
 - [League-season ingestion](docs/league-season-ingestion.md)

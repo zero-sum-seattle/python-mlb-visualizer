@@ -1,10 +1,10 @@
 """Links between the analytics pages, keeping the reader's selection intact.
 
-Moving between hits, batting strikeouts, runs, and their normalized comparison
-should not throw away the team, season, and rolling window the reader chose, so
-each link carries them forward. Only selections that are actually set are
-added, so a page that has no team yet links to a plain path rather than one with
-empty parameters.
+Moving between hits, batting strikeouts, runs, baserunners, and their
+normalized comparison should not throw away the team, season, and rolling
+window the reader chose, so each link carries them forward. Only selections
+that are actually set are added, so a page that has no team yet links to a
+plain path rather than one with empty parameters.
 """
 
 from dataclasses import dataclass
@@ -13,11 +13,13 @@ from urllib.parse import urlencode
 HITS_PATH = "/"
 STRIKEOUTS_PATH = "/strikeouts"
 RUNS_PATH = "/runs"
+BASERUNNERS_PATH = "/baserunners"
 COMPARISON_PATH = "/comparison"
 
 HITS_LABEL = "Hits"
 STRIKEOUTS_LABEL = "Batting Strikeouts"
 RUNS_LABEL = "Runs"
+BASERUNNERS_LABEL = "Baserunners"
 COMPARISON_LABEL = "Comparison"
 
 
@@ -63,6 +65,11 @@ def build_nav_links(
             label=RUNS_LABEL,
             href=f"{RUNS_PATH}{suffix}",
             is_current=current_path == RUNS_PATH,
+        ),
+        NavLink(
+            label=BASERUNNERS_LABEL,
+            href=f"{BASERUNNERS_PATH}{suffix}",
+            is_current=current_path == BASERUNNERS_PATH,
         ),
         NavLink(
             label=COMPARISON_LABEL,

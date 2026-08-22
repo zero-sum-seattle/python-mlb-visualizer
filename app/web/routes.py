@@ -12,6 +12,12 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
+from app.analytics.league_baserunners import (
+    MissingLeagueBaserunnerDataError,
+    build_league_baserunners_context,
+    compare_team_baserunners_to_league,
+    supports_league_wide_baserunners_average,
+)
 from app.analytics.league_hitting import (
     build_league_hits_context,
     compare_team_hits_to_league,
@@ -27,6 +33,10 @@ from app.analytics.league_strikeouts import (
     build_league_strikeouts_context,
     compare_team_strikeouts_to_league,
     supports_league_wide_strikeout_average,
+)
+from app.analytics.team_baserunners import (
+    MissingBaserunnerDataError,
+    build_team_baserunners_analysis,
 )
 from app.analytics.team_hitting import DEFAULT_ROLLING_WINDOW, build_team_hits_analysis
 from app.analytics.team_hitting_comparison import (
@@ -48,6 +58,8 @@ from app.database.repositories import (
     list_team_season,
 )
 from app.schemas.analytics import (
+    TeamBaserunnersAnalysis,
+    TeamBaserunnersLeagueComparison,
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamRunsAnalysis,
@@ -56,9 +68,11 @@ from app.schemas.analytics import (
     TeamStrikeoutsLeagueComparison,
 )
 from app.web.charts import (
+    BASERUNNERS_CHART_DIV_ID,
     COMPARISON_CHART_DIV_ID,
     RUNS_CHART_DIV_ID,
     STRIKEOUTS_CHART_DIV_ID,
+    build_team_baserunners_figure,
     build_team_hits_figure,
     build_team_hitting_comparison_figure,
     build_team_runs_figure,
@@ -69,10 +83,13 @@ from app.web.charts import (
 )
 from app.web.dependencies import get_db_session
 from app.web.formatting import (
+    build_baserunners_summary_cards,
     build_hitting_comparison_summary_cards,
     build_runs_summary_cards,
     build_strikeout_summary_cards,
     build_summary_cards,
+    format_league_baserunners_backfill_note,
+    format_league_baserunners_note,
     format_league_comparison_note,
     format_league_runs_note,
     format_league_strikeouts_backfill_note,
@@ -80,6 +97,7 @@ from app.web.formatting import (
     format_long_date,
 )
 from app.web.navigation import (
+    BASERUNNERS_PATH,
     COMPARISON_PATH,
     HITS_PATH,
     RUNS_PATH,
@@ -502,6 +520,154 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             request=request, name="runs.html", context=context
         )
 
+    @router.get(BASERUNNERS_PATH, response_class=HTMLResponse)
+    def baserunners(
+        request: Request,
+        session: Annotated[Session, Depends(get_db_session)],
+        team_id: Annotated[
+            int | None,
+            Query(gt=0, description="MLB team id that has been imported locally."),
+        ] = None,
+        season: Annotated[
+            int | None,
+            Query(gt=0, description="Season that has been imported for the team."),
+        ] = None,
+        window: Annotated[
+            RollingWindowParam,
+            Query(description="Games in the trailing rolling average."),
+        ] = DEFAULT_ROLLING_WINDOW,
+    ) -> Response:
+        """Render baserunners trends for one persisted team-season."""
+        try:
+            available = list_available_team_seasons(session)
+        except DatabaseSchemaMissingError as exc:
+            return _render_schema_error(templates, request, settings, exc)
+
+        teams = build_team_options(available)
+        context: dict[str, Any] = {
+            "app_name": settings.app_name,
+            "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
+            "window_options": ROLLING_WINDOW_OPTIONS,
+            "selected_window": window,
+            "selected_team": None,
+            "selected_season": None,
+            "import_command": IMPORT_COMMAND,
+            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
+            "form_action": BASERUNNERS_PATH,
+            "nav_links": build_nav_links(
+                current_path=BASERUNNERS_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
+        }
+
+        if not teams:
+            context["state"] = "empty"
+            return templates.TemplateResponse(
+                request=request, name="baserunners.html", context=context
+            )
+
+        selected_team = select_team(teams, team_id)
+        if selected_team is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No games are stored for team id {team_id}. "
+                "Pick a team that has been imported, or import that team."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="baserunners.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_team"] = selected_team
+        selected_season = select_season(selected_team, season)
+        if selected_season is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No {season} games are stored for {selected_team.team_name}. "
+                f"Stored seasons: "
+                f"{', '.join(str(value) for value in selected_team.seasons)}."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="baserunners.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=BASERUNNERS_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
+        games = list_team_season(
+            session, team_id=selected_team.team_id, season=selected_season
+        )
+
+        try:
+            analysis = build_team_baserunners_analysis(games, rolling_window=window)
+        except MissingBaserunnerDataError as exc:
+            # Stored before walks and hit-by-pitch were persisted. Charting
+            # these games would mean inventing totals or quietly analysing a
+            # subset, so the page asks for a re-import instead.
+            context["state"] = "missing_baserunner_data"
+            context["missing_message"] = str(exc)
+            context["games_missing"] = exc.games_missing
+            context["games_total"] = exc.games_total
+            context["reimport_command"] = import_command_for(
+                selected_team.team_id, selected_season
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="baserunners.html",
+                context=context,
+                status_code=409,
+            )
+
+        try:
+            league_comparison = _load_league_baserunners_comparison(session, analysis)
+            league_note = format_league_baserunners_note(league_comparison)
+        except MissingLeagueBaserunnerDataError as exc:
+            # Coverage is complete, but some stored league rows predate walks
+            # and hit-by-pitch being persisted. The selected team's own page
+            # still works; only the MLB-wide claim is withheld.
+            league_comparison = None
+            league_note = format_league_baserunners_backfill_note(
+                season=exc.season,
+                records_missing=exc.records_missing,
+                records_total=exc.records_total,
+                reimport_command=league_import_command_for(selected_season),
+            )
+
+        figure = build_team_baserunners_figure(analysis, league_comparison)
+        context.update(
+            {
+                "state": "ok",
+                "analysis": analysis,
+                "chart_html": render_figure_html(
+                    figure, div_id=BASERUNNERS_CHART_DIV_ID
+                ),
+                "rolling_average_label": rolling_average_trace_name(window),
+                "summary_cards": build_baserunners_summary_cards(
+                    analysis, league_comparison
+                ),
+                "league_comparison": league_comparison,
+                "league_comparison_note": league_note,
+                "data_through": format_long_date(analysis.last_game_date),
+            }
+        )
+        return templates.TemplateResponse(
+            request=request, name="baserunners.html", context=context
+        )
+
     @router.get(COMPARISON_PATH, response_class=HTMLResponse)
     def hitting_comparison(
         request: Request,
@@ -789,6 +955,36 @@ def _load_league_runs_comparison(
     league_games = list_league_season(session, season=analysis.season)
     league = build_league_runs_context(league_games)
     return compare_team_runs_to_league(analysis, league)
+
+
+def _load_league_baserunners_comparison(
+    session: Session,
+    analysis: TeamBaserunnersAnalysis,
+) -> TeamBaserunnersLeagueComparison | None:
+    """Read MLB baserunners context, or None when it is not earned.
+
+    Two conditions must hold, and both rules live in
+    ``app.analytics.league_baserunners``: the season's latest league-wide
+    refresh reached ``COMPLETE`` coverage, and every stored record for the
+    season carries known walk and hit-by-pitch totals. This only wires the
+    persisted coverage state and the persisted season to them.
+
+    A season without complete coverage yields None. A season whose stored rows
+    include an unknown walk or hit-by-pitch total raises
+    ``MissingLeagueBaserunnerDataError``, which the route turns into backfill
+    guidance rather than a missing-coverage message, because the two are
+    different problems with different remedies.
+
+    The season query cannot come back empty here: the analysis was built from
+    games stored for this season, so those rows are part of what it returns.
+    """
+    coverage = get_league_season_ingestion(session, season=analysis.season)
+    if not supports_league_wide_baserunners_average(coverage):
+        return None
+
+    league_games = list_league_season(session, season=analysis.season)
+    league = build_league_baserunners_context(league_games)
+    return compare_team_baserunners_to_league(analysis, league)
 
 
 def _render_comparison_unavailable(

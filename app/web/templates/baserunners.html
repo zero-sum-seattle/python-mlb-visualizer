@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Baserunners Trends
+  {%- else -%}
+    Team Baserunners Trends
+  {%- endif -%}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Team Baserunners Trends</h1>
+    <p class="page-intro__subtitle">
+      See how often a team is putting a runner on base per game as the season
+      progresses.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    {% include "_selector_form.html" %}
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% elif state == "missing_baserunner_data" %}
+      <section class="card notice">
+        <h2>This team-season needs to be re-imported</h2>
+        <p>
+          {{ games_missing }} of the {{ games_total }} stored games for
+          {{ selected_team.team_name }} in {{ selected_season }} have no walk or
+          hit-by-pitch total. They were imported before those two columns were
+          persisted, so their real totals are unknown.
+        </p>
+        <p>
+          They are not charted as zero and the remaining games are not presented
+          as a complete season. Re-import the team-season to fill in the real
+          values from MLB:
+        </p>
+        <pre class="command"><code>{{ reimport_command }}</code></pre>
+        <p>
+          The hits, batting strikeouts, and runs charts are unaffected and still
+          work for this team-season.
+        </p>
+      </section>
+    {% else %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} — Baserunners per Game</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure">{{ chart_html | safe }}</div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            Each point is the number of times {{ analysis.team_name }}'s hitters
+            reached base in one completed game: hits plus walks plus
+            hit-by-pitch. Reached-on-error and fielder's choice are not counted,
+            since neither is a hit, a walk, or a hit-by-pitch. The
+            {{ rolling_average_label|lower }} covers that game and the
+            {{ analysis.rolling_window - 1 }} games before it, and early-season
+            points use every game played so far. The dashed line is the team's
+            average across the completed games currently stored for this season.
+            A higher or lower value describes how often the team put a runner on
+            base; it is not automatically better than a club doing other things
+            well, and neither direction is labelled good or bad here.
+          </p>
+          <p>
+            {% if league_comparison %}
+              The dotted line is MLB overall.
+            {% endif %}
+            {{ league_comparison_note }}
+            {% if league_comparison %}
+              A positive <strong>vs MLB</strong> value means
+              {{ analysis.team_name }} put runners on base more times per game
+              than MLB overall across the stored season, and a negative value
+              fewer. It is descriptive context, not a measure of significance.
+            {% endif %}
+          </p>
+          <h3>What Baserunners/Game does not tell you</h3>
+          <p>
+            This is a per-game count, not a rate. It is not the same statistic as
+            on-base percentage (OBP), which divides the same numerator by plate
+            appearances. Plate appearances are not currently persisted, so this
+            page does not estimate OBP.
+          </p>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <span>Data through {{ data_through }}</span>
+  {% endif %}
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
+{% endblock %}
