@@ -152,6 +152,50 @@ Example:
 http://127.0.0.1:8000/comparison?team_id=136&season=2025&window=15
 ```
 
+## Run with Docker
+
+Build the image:
+
+```bash
+docker build -t mlb-visualizer .
+```
+
+Run it with a named volume so the SQLite database survives container
+restarts and rebuilds:
+
+```bash
+docker volume create mlb-visualizer-data
+docker run --rm -p 8000:8000 -v mlb-visualizer-data:/data mlb-visualizer
+```
+
+Open `http://127.0.0.1:8000`. Alembic migrations are applied automatically
+before the container runs any command, whether that is the app itself or an
+import script, so the schema is never out of date and no separate migration
+step is needed.
+
+The container starts with an empty database. Populate it by running an import
+script in its own one-off container, mounting the same named volume so it
+writes into the database the app container reads from:
+
+```bash
+docker run --rm -v mlb-visualizer-data:/data mlb-visualizer \
+    poetry run python scripts/import_team_season.py --team-id 136 --season 2025
+
+docker run --rm -v mlb-visualizer-data:/data mlb-visualizer \
+    poetry run python scripts/import_league_season.py --season 2025
+```
+
+The app container does not need to be restarted afterward: each request reads
+the SQLite file fresh, so a running app container picks up newly imported data
+on the next page load.
+
+Override configuration (for example a different port) with `-e`:
+
+```bash
+docker run --rm -p 8000:8000 -v mlb-visualizer-data:/data \
+    -e APP_NAME=my-mlb-visualizer mlb-visualizer
+```
+
 ## Statistics and interpretation
 
 ### Rolling averages
