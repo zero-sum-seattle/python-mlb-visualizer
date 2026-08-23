@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 from plotly.io import to_html
 from plotly.offline import get_plotlyjs
 
+from app.analytics.team_pitching import build_pitch_count_points
 from app.schemas.analytics import (
     TeamBaserunnersAnalysis,
     TeamBaserunnersLeagueComparison,
@@ -26,7 +27,6 @@ from app.schemas.analytics import (
     TeamHitsLeagueComparison,
     TeamHittingComparisonAnalysis,
     TeamPitchingAnalysis,
-    TeamPitchingLeagueComparison,
     TeamRunDifferentialAnalysis,
     TeamRunDifferentialPoint,
     TeamRunsAnalysis,
@@ -63,8 +63,8 @@ RAW_BASERUNNERS_TRACE_NAME = "Game Baserunners"
 BASERUNNERS_Y_AXIS_TITLE = "Baserunners per Game"
 
 PITCHING_CHART_DIV_ID = "team-pitching-chart"
-RAW_GAME_ERA_TRACE_NAME = "Game ERA"
-PITCHING_Y_AXIS_TITLE = "Earned Run Average"
+RAW_PITCHES_TRACE_NAME = "Game Pitches"
+PITCHING_Y_AXIS_TITLE = "Pitches per Game"
 
 RUN_DIFFERENTIAL_CHART_DIV_ID = "team-run-differential-chart"
 WIN_MARGIN_TRACE_NAME = "Win Margin"
@@ -826,62 +826,56 @@ def build_team_baserunners_figure(
 
 def build_team_pitching_figure(
     analysis: TeamPitchingAnalysis,
-    league_comparison: TeamPitchingLeagueComparison | None = None,
 ) -> go.Figure:
-    """Build the ERA figure for one team-season.
+    """Build the pitches-per-game figure for one team-season.
 
-    The raw series is each game's own ERA — earned runs per nine innings for
-    that game — so it shares a unit with the rolling line drawn through it. At
-    team level that is a well-behaved series: a team-game is almost always
-    eight to thirteen innings, so 2025 game ERAs ranged 0.00 to 13.50 with a
-    median of 3.00. Plotting raw earned runs instead would put a count and a
-    rate on the same axis.
+    Pitches thrown is a **count**, not a rate, so this chart follows the same
+    shape as the hits and runs pages: open markers for each game, a rolling
+    trailing mean, and a dashed season average. The rate statistics this page
+    also reports — ERA, WHIP, K/9, BB/9 — are aggregated quite differently and
+    live in the summary cards rather than on this axis.
 
-    The rolling line is the trailing-window **ERA**, aggregated by summing
-    earned runs and outs across the window, not by averaging the game ERAs the
-    markers show. The two are different numbers and the analysis layer is
-    careful about which one this is.
-
-    One reading note the other charts do not need: on this axis **lower is
-    better**. Nothing in the figure encodes that, so the page says it in text.
+    There is no MLB reference line. A league-wide pitches-per-game average
+    would need every club's pitching lines imported, which is a much larger
+    import than the batting-only one most seasons currently have, so the page
+    does not promise a comparison it usually could not honour.
     """
     game_numbers = [point.season_game_number for point in analysis.points]
     game_dates = [point.game_date for point in analysis.points]
-    game_eras = [point.game_era for point in analysis.points]
-    rolling = [point.rolling_era for point in analysis.points]
+    pitches, rolling = build_pitch_count_points(analysis)
     hover_data = [
         (
             format_long_date(point.game_date),
             format_matchup(point.opponent_name, point.home_away),
+            point.number_of_pitches,
             point.innings_pitched_display,
-            point.earned_runs,
-            point.game_era,
-            point.rolling_era,
+            point.strikes,
+            rolling_value,
         )
-        for point in analysis.points
+        for point, rolling_value in zip(analysis.points, rolling, strict=True)
     ]
     rolling_name = rolling_average_trace_name(analysis.rolling_window)
     hover_template = (
         "<b>%{customdata[0]}</b><br>"
         "%{customdata[1]}<br>"
-        "%{customdata[2]} IP, %{customdata[3]} ER<br>"
-        "Game ERA: %{customdata[4]:.2f}<br>"
-        f"{analysis.rolling_window}-Game ERA: "
-        "%{customdata[5]:.2f}<extra></extra>"
+        "%{customdata[2]} pitches over %{customdata[3]} IP<br>"
+        "%{customdata[4]} strikes<br>"
+        f"{analysis.rolling_window}-Game Avg: "
+        "%{customdata[5]:.1f}<extra></extra>"
     )
 
     figure = go.Figure()
     figure.add_trace(
         go.Scatter(
             x=game_numbers,
-            y=game_eras,
+            y=list(pitches),
             customdata=hover_data,
-            name=RAW_GAME_ERA_TRACE_NAME,
+            name=RAW_PITCHES_TRACE_NAME,
             mode="lines+markers",
             line={"color": _RAW_LINE, "width": 1.2},
-            # Open circles, as on every other raw series: the markers overlap
-            # heavily across 162 games and an outline stays readable where
-            # filled dots merge.
+            # Open circles: the game markers sit on top of each other across a
+            # 162-game season, and an outline stays readable where filled dots
+            # merge into a blob.
             marker={
                 "size": 5,
                 "color": "rgba(0,0,0,0)",
@@ -893,54 +887,33 @@ def build_team_pitching_figure(
     figure.add_trace(
         go.Scatter(
             x=game_numbers,
-            y=rolling,
+            y=list(rolling),
             customdata=hover_data,
             name=rolling_name,
             mode="lines",
+            # Straight segments between calculated points. A spline would
+            # overshoot between games and imply averages nobody calculated.
             line={"color": _TEAL, "width": 3.5, "shape": "linear"},
             hovertemplate=hover_template,
         )
     )
-    season_era = analysis.summary.season.era
+    season_average = analysis.summary.season.pitches_per_game
     figure.add_trace(
         go.Scatter(
             x=[game_numbers[0], game_numbers[-1]],
-            y=[season_era, season_era],
+            y=[season_average, season_average],
             name=TEAM_SEASON_AVERAGE_TRACE_NAME,
             mode="lines",
             line={"color": _NAVY, "width": 2, "dash": "dash"},
             hoverinfo="skip",
         )
     )
-    if league_comparison is not None:
-        mlb_era = league_comparison.league.era
-        figure.add_trace(
-            go.Scatter(
-                x=[game_numbers[0], game_numbers[-1]],
-                y=[mlb_era, mlb_era],
-                name=MLB_AVERAGE_TRACE_NAME,
-                mode="lines",
-                line={"color": _AMBER, "width": 2, "dash": "dot"},
-                hoverinfo="skip",
-            )
-        )
-
-    # Only one of the two horizontal lines is labelled: they routinely sit
-    # within a tenth of a run of each other, where two labels would overlap.
-    if league_comparison is None:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=season_era,
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-        )
-    else:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=league_comparison.league.era,
-            name=MLB_AVERAGE_TRACE_NAME,
-        )
+    _label_reference_line(
+        figure,
+        x=game_numbers[-1],
+        y=season_average,
+        name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+    )
 
     tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
     figure.update_layout(
@@ -982,9 +955,10 @@ def build_team_pitching_figure(
             "gridcolor": _GRID,
             "griddash": "dot",
             "zeroline": False,
-            # An ERA cannot be negative, and a shutout is a real 0.00, so the
-            # axis starts at zero and grows with the data.
-            "rangemode": "tozero",
+            # A team throws roughly 100 pitches at minimum, so anchoring at
+            # zero would waste the bottom third of the plot on empty space.
+            "rangemode": "normal",
+            "tickformat": "d",
             "automargin": True,
         },
     )

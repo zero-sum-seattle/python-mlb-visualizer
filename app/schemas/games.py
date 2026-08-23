@@ -214,6 +214,15 @@ class TeamGamePitchingLine(BaseModel):
         "never exceed it.",
     )
     batters_faced: int = Field(ge=0, description="Batters faced by this team.")
+    number_of_pitches: int = Field(
+        ge=0, description="Total pitches thrown by this team's pitchers."
+    )
+    strikes: int = Field(
+        ge=0,
+        description="Pitches that were strikes. A subset of number_of_pitches, "
+        "so it can never exceed it. Balls are not stored: MLB leaves that field "
+        "empty on the team game log, and it is number_of_pitches - strikes.",
+    )
     status: str = Field(min_length=1, description="Detailed MLB game status.")
     game_number: int = Field(
         ge=1,
@@ -250,7 +259,22 @@ class TeamGamePitchingLine(BaseModel):
                 f"batters_faced ({self.batters_faced}) cannot be fewer than outs "
                 f"({self.outs}); every out is recorded against a batter faced"
             )
+        if self.strikes > self.number_of_pitches:
+            raise ValueError(
+                f"strikes ({self.strikes}) cannot exceed number_of_pitches "
+                f"({self.number_of_pitches}); a strike is a pitch"
+            )
         return self
+
+    @property
+    def balls(self) -> int:
+        """Pitches that were not strikes.
+
+        Derived rather than stored: MLB leaves ``balls`` empty on the team game
+        log even though it populates ``strikes``, so this is the only figure
+        available and storing a redundant column would invite the two to drift.
+        """
+        return self.number_of_pitches - self.strikes
 
     @property
     def innings_pitched(self) -> float:

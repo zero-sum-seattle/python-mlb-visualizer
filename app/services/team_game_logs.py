@@ -435,6 +435,20 @@ def _normalize_pitching_line(
                 context=context,
                 log_name="pitching",
             ),
+            number_of_pitches=_require_nonnegative_stat(
+                split.stat.number_of_pitches,
+                field="numberOfPitches",
+                context=context,
+                log_name="pitching",
+            ),
+            # ``balls`` is deliberately not read: MLB leaves it empty on the
+            # team game log, and it is numberOfPitches - strikes.
+            strikes=_require_nonnegative_stat(
+                split.stat.strikes,
+                field="strikes",
+                context=context,
+                log_name="pitching",
+            ),
             status=status,
             game_number=scheduled.game_number,
             doubleheader=scheduled.double_header != "N",

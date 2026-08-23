@@ -945,7 +945,7 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
 
         analysis = build_team_pitching_analysis(games, rolling_window=window)
         league_comparison = _load_league_pitching_comparison(session, analysis)
-        figure = build_team_pitching_figure(analysis, league_comparison)
+        figure = build_team_pitching_figure(analysis)
 
         context.update(
             {

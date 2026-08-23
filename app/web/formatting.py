@@ -25,6 +25,7 @@ RUNS_PER_GAME_CAPTION = "Runs Scored per Game"
 BASERUNNERS_PER_GAME_CAPTION = "Baserunners per Game"
 RUN_DIFFERENTIAL_PER_GAME_CAPTION = "Run Differential per Game"
 EARNED_RUN_AVERAGE_CAPTION = "Earned Run Average"
+PITCHES_PER_GAME_CAPTION = "Pitches per Game"
 LEAGUE_PITCHING_UNAVAILABLE_NOTE = (
     "MLB comparison unavailable. A complete league-season import that includes "
     "pitching is required before an MLB-wide ERA can be shown."
@@ -646,45 +647,39 @@ def build_pitching_summary_cards(
 ) -> list[SummaryCard]:
     """Round the analysis for display only; the calculations keep full precision.
 
-    Four cards, like every other metric page. The third is the team's ERA
-    difference against MLB, which reads ``—`` rather than a number when the
-    season has no trustworthy league pitching data — never ``0.00``, which is a
-    real value meaning the team matched MLB exactly.
+    Four cards, like every other metric page. The first two describe the
+    charted statistic, pitches per game; the last two carry the rate statistics
+    that describe how well those pitches went.
 
-    The fourth card carries WHIP, K/9, and BB/9 together rather than giving
-    each its own card. They are the components behind the ERA the rest of the
-    page is about, and a four-card row is the shape every other page uses.
+    There is no ``vs MLB`` card here. A league-wide pitches-per-game figure
+    would need every club's pitching lines imported, which is a much larger
+    import than the batting-only one most seasons currently have, so the page
+    does not show a comparison it usually could not honour.
     """
     season = analysis.summary.season
     window = analysis.rolling_window
-
-    if league_comparison is None:
-        league_card = SummaryCard(
-            label="vs MLB",
-            value=NO_LEAGUE_COMPARISON_VALUE,
-            caption=NO_LEAGUE_COMPARISON_CAPTION,
-        )
-    else:
-        league_card = SummaryCard(
-            label="vs MLB",
-            value=f"{league_comparison.era_difference_vs_mlb:+.2f}",
-            # Spelled out because this page's sign convention is the opposite
-            # of every other page's: below MLB is the better direction.
-            caption="ERA, Negative Is Better",
-        )
+    recent = analysis.points[-min(window, len(analysis.points)) :]
+    recent_pitches_per_game = sum(p.number_of_pitches for p in recent) / len(recent)
 
     return [
         SummaryCard(
-            label=f"Recent {window}-Game ERA",
-            value=f"{analysis.summary.recent_era:.2f}",
-            caption=EARNED_RUN_AVERAGE_CAPTION,
+            label=f"Recent {window}-Game Avg",
+            value=f"{recent_pitches_per_game:.1f}",
+            caption=PITCHES_PER_GAME_CAPTION,
+        ),
+        SummaryCard(
+            label="Season Pitches/Game",
+            value=f"{season.pitches_per_game:.1f}",
+            caption=(
+                f"{season.number_of_pitches:,} Pitches, "
+                f"{season.strike_percentage:.0%} Strikes"
+            ),
         ),
         SummaryCard(
             label="Season ERA",
             value=f"{season.era:.2f}",
-            caption=(f"{format_innings(season.outs)} IP, {season.earned_runs:,} ER"),
+            caption=f"{format_innings(season.outs)} IP, {season.earned_runs:,} ER",
         ),
-        league_card,
         SummaryCard(
             label="WHIP",
             value=f"{season.whip:.2f}",

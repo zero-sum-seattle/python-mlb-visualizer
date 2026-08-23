@@ -113,6 +113,8 @@ def build_team_pitching_analysis(
             hits_allowed=game.hits_allowed,
             base_on_balls=game.base_on_balls,
             strikeouts=game.strikeouts,
+            number_of_pitches=game.number_of_pitches,
+            strikes=game.strikes,
             game_era=_era(earned_runs=game.earned_runs, outs=game.outs),
             rolling_era=rolling_era,
         )
@@ -164,6 +166,8 @@ def _aggregate_rates(games: Sequence[TeamGamePitchingLine]) -> TeamPitchingRates
     base_on_balls = sum(game.base_on_balls for game in games)
     strikeouts = sum(game.strikeouts for game in games)
     home_runs_allowed = sum(game.home_runs_allowed for game in games)
+    number_of_pitches = sum(game.number_of_pitches for game in games)
+    strikes = sum(game.strikes for game in games)
     innings = outs / OUTS_PER_INNING
 
     return TeamPitchingRates(
@@ -174,6 +178,10 @@ def _aggregate_rates(games: Sequence[TeamGamePitchingLine]) -> TeamPitchingRates
         base_on_balls=base_on_balls,
         strikeouts=strikeouts,
         home_runs_allowed=home_runs_allowed,
+        number_of_pitches=number_of_pitches,
+        strikes=strikes,
+        pitches_per_game=number_of_pitches / len(games),
+        strike_percentage=strikes / number_of_pitches if number_of_pitches else 0.0,
         era=earned_runs * OUTS_PER_NINE_INNINGS / outs,
         whip=(hits_allowed + base_on_balls) / innings,
         strikeouts_per_nine=strikeouts * OUTS_PER_NINE_INNINGS / outs,
@@ -230,3 +238,34 @@ def _build_summary(
         prior_window_era=prior_window_era,
         change_vs_prior_window=change_vs_prior_window,
     )
+
+
+def build_pitch_count_points(
+    analysis: TeamPitchingAnalysis,
+) -> tuple[tuple[int, ...], tuple[float, ...]]:
+    """Return per-game pitch counts and their trailing rolling mean.
+
+    Pitches per game is a **count**, not a rate, so unlike everything else in
+    this module a plain mean of the per-game values is the right figure. The
+    aggregation warning in the module docstring applies to ERA, WHIP, K/9 and
+    BB/9 — ratios of two varying quantities — and not to this one.
+    """
+    counts = [point.number_of_pitches for point in analysis.points]
+    return tuple(counts), tuple(_trailing_means(counts, analysis.rolling_window))
+
+
+def _trailing_means(values: list[int], window: int) -> list[float]:
+    """Return the trailing mean ending at each position.
+
+    The same trailing-window definition the count-based pages use: the mean at
+    index ``i`` covers the ``window`` most recent values up to and including
+    ``i``, and early positions use every value available so far.
+    """
+    means: list[float] = []
+    running = 0
+    for index, value in enumerate(values):
+        running += value
+        if index >= window:
+            running -= values[index - window]
+        means.append(running / min(index + 1, window))
+    return means

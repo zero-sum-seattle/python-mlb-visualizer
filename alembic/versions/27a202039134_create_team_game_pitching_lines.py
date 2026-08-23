@@ -18,6 +18,9 @@ string in baseball notation where ``'10.2'`` means ten and two-thirds innings,
 so storing it as a number would silently corrupt every derived rate. Only raw
 components are stored; ERA, WHIP, K/9, and BB/9 are derived on read.
 
+Balls are not a column. MLB leaves that field empty on the team game log even
+though it populates ``strikes``, and balls are ``number_of_pitches - strikes``.
+
 Revision ID: 27a202039134
 Revises: 2efdbec9b07e
 Create Date: 2026-08-23 11:13:14.102544
@@ -57,6 +60,8 @@ def upgrade() -> None:
         sa.Column("pitching_strikeouts", sa.Integer(), nullable=False),
         sa.Column("home_runs_allowed", sa.Integer(), nullable=False),
         sa.Column("batters_faced", sa.Integer(), nullable=False),
+        sa.Column("number_of_pitches", sa.Integer(), nullable=False),
+        sa.Column("strikes", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("game_number", sa.Integer(), nullable=False),
         sa.Column("doubleheader", sa.Boolean(), nullable=False),
@@ -77,6 +82,18 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "batters_faced >= outs",
             name=op.f("ck_team_game_pitching_lines_batters_faced_covers_outs"),
+        ),
+        sa.CheckConstraint(
+            "strikes <= number_of_pitches",
+            name=op.f("ck_team_game_pitching_lines_strikes_within_number_of_pitches"),
+        ),
+        sa.CheckConstraint(
+            "number_of_pitches >= 0",
+            name=op.f("ck_team_game_pitching_lines_number_of_pitches_nonnegative"),
+        ),
+        sa.CheckConstraint(
+            "strikes >= 0",
+            name=op.f("ck_team_game_pitching_lines_strikes_nonnegative"),
         ),
         sa.CheckConstraint(
             "earned_runs <= runs_allowed",

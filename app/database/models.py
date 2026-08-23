@@ -215,6 +215,11 @@ class TeamGamePitchingLineRecord(Base):
             name="home_runs_within_hits_allowed",
         ),
         CheckConstraint("batters_faced >= outs", name="batters_faced_covers_outs"),
+        CheckConstraint("number_of_pitches >= 0", name="number_of_pitches_nonnegative"),
+        CheckConstraint("strikes >= 0", name="strikes_nonnegative"),
+        CheckConstraint(
+            "strikes <= number_of_pitches", name="strikes_within_number_of_pitches"
+        ),
         CheckConstraint("game_number >= 1", name="pitching_game_number_min"),
         CheckConstraint(
             "scheduled_innings >= 1", name="pitching_scheduled_innings_min"
@@ -252,6 +257,10 @@ class TeamGamePitchingLineRecord(Base):
     pitching_strikeouts: Mapped[int] = mapped_column(Integer, nullable=False)
     home_runs_allowed: Mapped[int] = mapped_column(Integer, nullable=False)
     batters_faced: Mapped[int] = mapped_column(Integer, nullable=False)
+    number_of_pitches: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Balls are not stored: MLB leaves that field empty on the team game log,
+    # and it is number_of_pitches - strikes.
+    strikes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     game_number: Mapped[int] = mapped_column(Integer, nullable=False)
     doubleheader: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -282,6 +291,8 @@ class TeamGamePitchingLineRecord(Base):
             strikeouts=self.pitching_strikeouts,
             home_runs_allowed=self.home_runs_allowed,
             batters_faced=self.batters_faced,
+            number_of_pitches=self.number_of_pitches,
+            strikes=self.strikes,
             status=self.status,
             game_number=self.game_number,
             doubleheader=self.doubleheader,
@@ -304,6 +315,8 @@ class TeamGamePitchingLineRecord(Base):
         self.pitching_strikeouts = line.strikeouts
         self.home_runs_allowed = line.home_runs_allowed
         self.batters_faced = line.batters_faced
+        self.number_of_pitches = line.number_of_pitches
+        self.strikes = line.strikes
         self.status = line.status
         self.game_number = line.game_number
         self.doubleheader = line.doubleheader
@@ -334,6 +347,8 @@ class TeamGamePitchingLineRecord(Base):
             pitching_strikeouts=line.strikeouts,
             home_runs_allowed=line.home_runs_allowed,
             batters_faced=line.batters_faced,
+            number_of_pitches=line.number_of_pitches,
+            strikes=line.strikes,
             status=line.status,
             game_number=line.game_number,
             doubleheader=line.doubleheader,

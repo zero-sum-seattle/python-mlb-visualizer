@@ -1208,6 +1208,18 @@ class TeamPitchingRates(BaseModel):
     base_on_balls: int = Field(ge=0, description="Walks issued.")
     strikeouts: int = Field(ge=0, description="Strikeouts recorded.")
     home_runs_allowed: int = Field(ge=0, description="Home runs allowed.")
+    number_of_pitches: int = Field(ge=0, description="Pitches thrown.")
+    strikes: int = Field(
+        ge=0, description="Pitches that were strikes. Never exceeds the total."
+    )
+    pitches_per_game: float = Field(
+        ge=0,
+        description="number_of_pitches / games. A count per game, so unlike the "
+        "rates below it is a plain mean and aggregates by averaging.",
+    )
+    strike_percentage: float = Field(
+        ge=0, le=1, description="strikes / number_of_pitches."
+    )
     era: float = Field(
         ge=0, description="Earned runs per nine innings: earned_runs * 27 / outs."
     )
@@ -1251,6 +1263,20 @@ class TeamPitchingRates(BaseModel):
                 f"home_runs_allowed ({self.home_runs_allowed}) cannot exceed "
                 f"hits_allowed ({self.hits_allowed})"
             )
+        if self.strikes > self.number_of_pitches:
+            raise ValueError(
+                f"strikes ({self.strikes}) cannot exceed number_of_pitches "
+                f"({self.number_of_pitches})"
+            )
+        if self.number_of_pitches:
+            expected_strike_pct = self.strikes / self.number_of_pitches
+            if not isclose(
+                self.strike_percentage, expected_strike_pct, rel_tol=1e-9, abs_tol=1e-9
+            ):
+                raise ValueError(
+                    f"strike_percentage ({self.strike_percentage}) must equal "
+                    f"strikes / number_of_pitches ({expected_strike_pct})"
+                )
         return self
 
 
@@ -1291,6 +1317,8 @@ class TeamPitchingPoint(BaseModel):
     hits_allowed: int = Field(ge=0, description="Hits allowed in this game.")
     base_on_balls: int = Field(ge=0, description="Walks issued in this game.")
     strikeouts: int = Field(ge=0, description="Strikeouts recorded in this game.")
+    number_of_pitches: int = Field(ge=0, description="Pitches thrown in this game.")
+    strikes: int = Field(ge=0, description="Pitches that were strikes.")
     game_era: float = Field(
         ge=0, description="This game's earned runs per nine innings."
     )
