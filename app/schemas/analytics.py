@@ -1183,3 +1183,322 @@ class TeamRunDifferentialAnalysis(BaseModel):
     def last_game_date(self) -> date:
         """Date of the most recent completed game in the analysis."""
         return self.points[-1].game_date
+
+
+class TeamPitchingRates(BaseModel):
+    """Pitching rates over a set of games, with the totals they came from.
+
+    Every rate is carried beside its own numerator and denominator so the
+    validators below can prove the figures agree. A rate that has drifted from
+    its components is not constructible.
+
+    Innings appear only as ``innings_pitched``, a true fraction derived from
+    ``outs``. Baseball notation — where ``10.2`` means ten and two-thirds — is
+    a display concern and never a number in this model.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    outs: int = Field(gt=0, description="Outs recorded across the games in scope.")
+    innings_pitched: float = Field(
+        gt=0, description="outs / 3, as a true fraction rather than baseball notation."
+    )
+    earned_runs: int = Field(ge=0, description="Earned runs allowed.")
+    hits_allowed: int = Field(ge=0, description="Hits allowed.")
+    base_on_balls: int = Field(ge=0, description="Walks issued.")
+    strikeouts: int = Field(ge=0, description="Strikeouts recorded.")
+    home_runs_allowed: int = Field(ge=0, description="Home runs allowed.")
+    era: float = Field(
+        ge=0, description="Earned runs per nine innings: earned_runs * 27 / outs."
+    )
+    whip: float = Field(
+        ge=0,
+        description="Walks and hits per inning pitched: "
+        "(hits_allowed + base_on_balls) / innings_pitched.",
+    )
+    strikeouts_per_nine: float = Field(ge=0, description="strikeouts * 27 / outs.")
+    walks_per_nine: float = Field(ge=0, description="base_on_balls * 27 / outs.")
+
+    @model_validator(mode="after")
+    def _rates_match_their_components(self) -> TeamPitchingRates:
+        expected_innings = self.outs / 3
+        if not isclose(
+            self.innings_pitched, expected_innings, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            raise ValueError(
+                f"innings_pitched ({self.innings_pitched}) must equal outs / 3 "
+                f"({expected_innings})"
+            )
+        for name, numerator in (
+            ("era", self.earned_runs),
+            ("strikeouts_per_nine", self.strikeouts),
+            ("walks_per_nine", self.base_on_balls),
+        ):
+            expected = numerator * 27 / self.outs
+            if not isclose(getattr(self, name), expected, rel_tol=1e-9, abs_tol=1e-9):
+                raise ValueError(
+                    f"{name} ({getattr(self, name)}) must equal its numerator "
+                    f"* 27 / outs ({expected})"
+                )
+        expected_whip = (self.hits_allowed + self.base_on_balls) / self.innings_pitched
+        if not isclose(self.whip, expected_whip, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"whip ({self.whip}) must equal (hits_allowed + base_on_balls) "
+                f"/ innings_pitched ({expected_whip})"
+            )
+        if self.home_runs_allowed > self.hits_allowed:
+            raise ValueError(
+                f"home_runs_allowed ({self.home_runs_allowed}) cannot exceed "
+                f"hits_allowed ({self.hits_allowed})"
+            )
+        return self
+
+
+class TeamPitchingPoint(BaseModel):
+    """One completed game plotted on the team pitching chart.
+
+    ``game_era`` is that single game's earned runs per nine innings, which is
+    the raw series. ``rolling_era`` is the trailing-window ERA, aggregated by
+    summing earned runs and outs across the window rather than by averaging
+    game ERAs — the two are different numbers.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    game_pk: int = Field(gt=0, description="MLB game identifier.")
+    game_number: int = Field(
+        ge=1,
+        description="MLB game number on the date, 2 for the second game of a "
+        "doubleheader. Used for ordering, not for the x axis.",
+    )
+    season_game_number: int = Field(
+        ge=1,
+        description="Continuous 1-based position of the game within the season.",
+    )
+    game_date: date = Field(description="Official date the game counts against.")
+    opponent_name: str = Field(
+        min_length=1, description="Display name of the opponent."
+    )
+    home_away: HomeAway = Field(description="Whether the team was home or away.")
+    outs: int = Field(gt=0, description="Outs recorded in this game.")
+    innings_pitched_display: str = Field(
+        min_length=1,
+        description="Innings in the baseball notation a box score prints, such "
+        "as '10.2' for 32 outs. Display only; never used in a calculation.",
+    )
+    earned_runs: int = Field(ge=0, description="Earned runs allowed in this game.")
+    runs_allowed: int = Field(ge=0, description="Runs allowed, earned or not.")
+    hits_allowed: int = Field(ge=0, description="Hits allowed in this game.")
+    base_on_balls: int = Field(ge=0, description="Walks issued in this game.")
+    strikeouts: int = Field(ge=0, description="Strikeouts recorded in this game.")
+    game_era: float = Field(
+        ge=0, description="This game's earned runs per nine innings."
+    )
+    rolling_era: float = Field(
+        ge=0, description="Trailing rolling ERA ending at this game."
+    )
+
+    @model_validator(mode="after")
+    def _game_era_matches_the_components(self) -> TeamPitchingPoint:
+        expected = self.earned_runs * 27 / self.outs
+        if not isclose(self.game_era, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"game_era ({self.game_era}) must equal earned_runs * 27 / outs "
+                f"({expected})"
+            )
+        if self.earned_runs > self.runs_allowed:
+            raise ValueError(
+                f"earned_runs ({self.earned_runs}) cannot exceed runs_allowed "
+                f"({self.runs_allowed})"
+            )
+        return self
+
+
+class TeamPitchingSummary(BaseModel):
+    """Headline numbers describing a team-season's pitching.
+
+    ``season`` holds the single authoritative set of season rates; the chart's
+    reference line, the summary cards, and the MLB comparison all read from it,
+    so the page cannot show two different ERAs for the same team.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    games_played: int = Field(ge=1, description="Completed games analysed.")
+    season: TeamPitchingRates
+    recent_era: float = Field(
+        ge=0, description="ERA over the most recent rolling window."
+    )
+    prior_window_era: float | None = Field(
+        default=None,
+        ge=0,
+        description="ERA over the window immediately before the recent one, or "
+        "None when two complete windows do not exist.",
+    )
+    change_vs_prior_window: float | None = Field(
+        default=None,
+        description="recent_era - prior_window_era, or None. Negative is an "
+        "improvement, since a lower ERA is better.",
+    )
+
+    @model_validator(mode="after")
+    def _prior_window_fields_agree(self) -> TeamPitchingSummary:
+        has_prior = self.prior_window_era is not None
+        has_change = self.change_vs_prior_window is not None
+        if has_prior != has_change:
+            raise ValueError(
+                "prior_window_era and change_vs_prior_window must both be "
+                "present or both be None"
+            )
+        return self
+
+
+class TeamPitchingAnalysis(BaseModel):
+    """A team-season's pitching trend, ready to chart."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id.")
+    team_name: str = Field(min_length=1, description="Historical name for the season.")
+    season: int = Field(gt=0, description="Season analysed.")
+    rolling_window: int = Field(ge=1, description="Games in the trailing window.")
+    points: tuple[TeamPitchingPoint, ...] = Field(
+        min_length=1, description="Games in chart order."
+    )
+    summary: TeamPitchingSummary
+
+    @model_validator(mode="after")
+    def _summary_matches_points(self) -> TeamPitchingAnalysis:
+        if self.summary.games_played != len(self.points):
+            raise ValueError(
+                "summary.games_played must equal the number of chart points"
+            )
+        charted_outs = sum(point.outs for point in self.points)
+        if charted_outs != self.summary.season.outs:
+            raise ValueError(
+                f"summary.season.outs ({self.summary.season.outs}) must equal the "
+                f"outs across the chart points ({charted_outs})"
+            )
+        charted_earned_runs = sum(point.earned_runs for point in self.points)
+        if charted_earned_runs != self.summary.season.earned_runs:
+            raise ValueError(
+                f"summary.season.earned_runs ({self.summary.season.earned_runs}) "
+                f"must equal the earned runs across the chart points "
+                f"({charted_earned_runs})"
+            )
+        return self
+
+    @property
+    def last_game_date(self) -> date:
+        """Date of the most recent completed game in the analysis."""
+        return self.points[-1].game_date
+
+
+class LeaguePitchingContext(BaseModel):
+    """MLB-wide pitching context for one season.
+
+    Built from every persisted team-game pitching line for the season. The
+    rates are **outs-weighted**, not game-weighted: ERA and WHIP are per-inning
+    rates, so the denominator is the innings actually pitched rather than a
+    count of team-game records. That is a different weighting from the other
+    league contexts in this module, and it is the one a published league ERA
+    uses.
+
+    Every field describes the games **currently stored** for the season. For a
+    season still being played that is the completed games held by the most
+    recent complete league-wide refresh, not a whole season.
+
+    A league season imported before pitching was collected has no rows here at
+    all, which is a different state from a season with poor pitching.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    season: int = Field(gt=0, description="Season the context describes.")
+    teams_represented: int = Field(
+        ge=1,
+        description="Distinct teams with at least one stored pitching line.",
+    )
+    team_game_records: int = Field(
+        ge=1,
+        description="Team-game pitching lines counted. One MLB game contributes "
+        "two records once both clubs are stored, so this is not a game count.",
+    )
+    outs: int = Field(gt=0, description="Outs recorded across every counted record.")
+    innings_pitched: float = Field(gt=0, description="outs / 3.")
+    total_earned_runs: int = Field(ge=0, description="Earned runs allowed in total.")
+    era: float = Field(ge=0, description="total_earned_runs * 27 / outs.")
+    whip: float = Field(ge=0, description="Walks and hits per inning pitched.")
+    strikeouts_per_nine: float = Field(ge=0, description="Strikeouts per nine innings.")
+    walks_per_nine: float = Field(ge=0, description="Walks per nine innings.")
+
+    @model_validator(mode="after")
+    def _rates_match_the_totals(self) -> LeaguePitchingContext:
+        expected_innings = self.outs / 3
+        if not isclose(
+            self.innings_pitched, expected_innings, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            raise ValueError(
+                f"innings_pitched ({self.innings_pitched}) must equal outs / 3 "
+                f"({expected_innings})"
+            )
+        expected_era = self.total_earned_runs * 27 / self.outs
+        if not isclose(self.era, expected_era, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"era ({self.era}) must equal total_earned_runs * 27 / outs "
+                f"({expected_era})"
+            )
+        if self.teams_represented > self.team_game_records:
+            raise ValueError(
+                f"teams_represented ({self.teams_represented}) cannot exceed "
+                f"team_game_records ({self.team_game_records})"
+            )
+        return self
+
+
+class TeamPitchingLeagueComparison(BaseModel):
+    """One team's pitching rates placed beside MLB overall for the same season.
+
+    Note the sign convention, which is the opposite of every other comparison
+    in this module: a **negative** difference is the better direction, because
+    a lower ERA and a lower WHIP are better. The templates and formatters are
+    responsible for saying so rather than leaving a reader to assume that
+    positive means good.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id.")
+    team_name: str = Field(min_length=1, description="Display name for the season.")
+    season: int = Field(gt=0, description="Season compared.")
+    team_era: float = Field(ge=0, description="The team's season ERA.")
+    team_whip: float = Field(ge=0, description="The team's season WHIP.")
+    team_strikeouts_per_nine: float = Field(ge=0, description="The team's K/9.")
+    team_walks_per_nine: float = Field(ge=0, description="The team's BB/9.")
+    league: LeaguePitchingContext
+    era_difference_vs_mlb: float = Field(
+        description="team_era - league.era. Negative means the team allowed "
+        "fewer earned runs per nine innings than MLB, which is better.",
+    )
+    whip_difference_vs_mlb: float = Field(
+        description="team_whip - league.whip. Negative is better.",
+    )
+
+    @model_validator(mode="after")
+    def _comparison_is_internally_consistent(self) -> TeamPitchingLeagueComparison:
+        if self.season != self.league.season:
+            raise ValueError(
+                f"season ({self.season}) must match the league context season "
+                f"({self.league.season})"
+            )
+        for name, team_value, league_value in (
+            ("era_difference_vs_mlb", self.team_era, self.league.era),
+            ("whip_difference_vs_mlb", self.team_whip, self.league.whip),
+        ):
+            expected = team_value - league_value
+            if not isclose(getattr(self, name), expected, rel_tol=1e-9, abs_tol=1e-9):
+                raise ValueError(
+                    f"{name} ({getattr(self, name)}) must equal the team value "
+                    f"minus the league value ({expected})"
+                )
+        return self

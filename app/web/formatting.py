@@ -9,6 +9,8 @@ from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamHittingComparisonAnalysis,
+    TeamPitchingAnalysis,
+    TeamPitchingLeagueComparison,
     TeamRunDifferentialAnalysis,
     TeamRunsAnalysis,
     TeamRunsLeagueComparison,
@@ -22,6 +24,11 @@ STRIKEOUTS_PER_GAME_CAPTION = "Batting Strikeouts per Game"
 RUNS_PER_GAME_CAPTION = "Runs Scored per Game"
 BASERUNNERS_PER_GAME_CAPTION = "Baserunners per Game"
 RUN_DIFFERENTIAL_PER_GAME_CAPTION = "Run Differential per Game"
+EARNED_RUN_AVERAGE_CAPTION = "Earned Run Average"
+LEAGUE_PITCHING_UNAVAILABLE_NOTE = (
+    "MLB comparison unavailable. A complete league-season import that includes "
+    "pitching is required before an MLB-wide ERA can be shown."
+)
 NORMALIZED_INDEX_CAPTION = "MLB Avg = 100"
 NO_LEAGUE_COMPARISON_VALUE = "—"
 NO_LEAGUE_COMPARISON_CAPTION = "Comparison unavailable"
@@ -630,4 +637,113 @@ def format_missing_opponent_note(
         f"Runs allowed comes from the opponent's own record, which a "
         f"single-team import does not fetch. Import the league season to pair "
         f"every game: {league_import_command}"
+    )
+
+
+def build_pitching_summary_cards(
+    analysis: TeamPitchingAnalysis,
+    league_comparison: TeamPitchingLeagueComparison | None = None,
+) -> list[SummaryCard]:
+    """Round the analysis for display only; the calculations keep full precision.
+
+    Four cards, like every other metric page. The third is the team's ERA
+    difference against MLB, which reads ``—`` rather than a number when the
+    season has no trustworthy league pitching data — never ``0.00``, which is a
+    real value meaning the team matched MLB exactly.
+
+    The fourth card carries WHIP, K/9, and BB/9 together rather than giving
+    each its own card. They are the components behind the ERA the rest of the
+    page is about, and a four-card row is the shape every other page uses.
+    """
+    season = analysis.summary.season
+    window = analysis.rolling_window
+
+    if league_comparison is None:
+        league_card = SummaryCard(
+            label="vs MLB",
+            value=NO_LEAGUE_COMPARISON_VALUE,
+            caption=NO_LEAGUE_COMPARISON_CAPTION,
+        )
+    else:
+        league_card = SummaryCard(
+            label="vs MLB",
+            value=f"{league_comparison.era_difference_vs_mlb:+.2f}",
+            # Spelled out because this page's sign convention is the opposite
+            # of every other page's: below MLB is the better direction.
+            caption="ERA, Negative Is Better",
+        )
+
+    return [
+        SummaryCard(
+            label=f"Recent {window}-Game ERA",
+            value=f"{analysis.summary.recent_era:.2f}",
+            caption=EARNED_RUN_AVERAGE_CAPTION,
+        ),
+        SummaryCard(
+            label="Season ERA",
+            value=f"{season.era:.2f}",
+            caption=(f"{format_innings(season.outs)} IP, {season.earned_runs:,} ER"),
+        ),
+        league_card,
+        SummaryCard(
+            label="WHIP",
+            value=f"{season.whip:.2f}",
+            caption=(
+                f"{season.strikeouts_per_nine:.1f} K/9, "
+                f"{season.walks_per_nine:.1f} BB/9"
+            ),
+        ),
+    ]
+
+
+def format_innings(outs: int) -> str:
+    """Render outs as innings in the notation a box score prints.
+
+    ``4388`` outs is ``1462.2``, meaning 1462 and two-thirds innings. The
+    fractional digit counts thirds and is never a decimal, which is exactly why
+    innings are stored as outs and converted here rather than the other way
+    round.
+    """
+    return f"{outs // 3:,}.{outs % 3}"
+
+
+def format_league_pitching_note(
+    league_comparison: TeamPitchingLeagueComparison | None,
+) -> str:
+    """Describe the MLB pitching comparison, or say why there is none."""
+    if league_comparison is None:
+        return LEAGUE_PITCHING_UNAVAILABLE_NOTE
+
+    league = league_comparison.league
+    return (
+        f"MLB overall allowed {league.era:.2f} earned runs per nine innings "
+        f"across the {league.team_game_records:,} team-game pitching records "
+        f"stored for {league.season}, over {format_innings(league.outs)} innings."
+    )
+
+
+def format_pitching_comparison_sentence(
+    league_comparison: TeamPitchingLeagueComparison | None,
+    team_name: str,
+) -> str:
+    """Say which side of MLB the team is on, in words rather than a sign.
+
+    The summary card shows a signed number, and on this page a negative number
+    is the good one. Rather than trusting a reader to remember that, this
+    renders the direction as ``below`` or ``above`` and names what it means.
+    """
+    if league_comparison is None:
+        return ""
+
+    difference = league_comparison.era_difference_vs_mlb
+    # Under a hundredth of a run rounds to +0.00 on the card, where "above" or
+    # "below" would be a claim the number does not support.
+    if abs(difference) < 0.005:
+        return f"{team_name}'s ERA is level with MLB overall for the stored season."
+    direction = "below" if difference < 0 else "above"
+    quality = "allowing fewer" if difference < 0 else "allowing more"
+    return (
+        f"{team_name}'s ERA is {abs(difference):.2f} {direction} MLB overall, "
+        f"{quality} earned runs per nine innings than the league across the "
+        f"stored season."
     )

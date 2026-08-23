@@ -23,6 +23,11 @@ from app.analytics.league_hitting import (
     compare_team_hits_to_league,
     supports_league_wide_average,
 )
+from app.analytics.league_pitching import (
+    build_league_pitching_context,
+    compare_team_pitching_to_league,
+    supports_league_wide_pitching_average,
+)
 from app.analytics.league_runs import (
     build_league_runs_context,
     compare_team_runs_to_league,
@@ -43,6 +48,7 @@ from app.analytics.team_hitting_comparison import (
     InvalidComparisonBaselineError,
     build_team_hitting_comparison_analysis,
 )
+from app.analytics.team_pitching import build_team_pitching_analysis
 from app.analytics.team_run_differential import (
     MissingOpponentDataError,
     build_team_run_differential_analysis,
@@ -59,7 +65,9 @@ from app.database.repositories import (
     get_league_season_ingestion,
     list_available_team_seasons,
     list_league_season,
+    list_league_season_pitching,
     list_team_season,
+    list_team_season_pitching,
     list_team_season_run_results,
 )
 from app.schemas.analytics import (
@@ -67,6 +75,8 @@ from app.schemas.analytics import (
     TeamBaserunnersLeagueComparison,
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
+    TeamPitchingAnalysis,
+    TeamPitchingLeagueComparison,
     TeamRunsAnalysis,
     TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
@@ -75,12 +85,14 @@ from app.schemas.analytics import (
 from app.web.charts import (
     BASERUNNERS_CHART_DIV_ID,
     COMPARISON_CHART_DIV_ID,
+    PITCHING_CHART_DIV_ID,
     RUN_DIFFERENTIAL_CHART_DIV_ID,
     RUNS_CHART_DIV_ID,
     STRIKEOUTS_CHART_DIV_ID,
     build_team_baserunners_figure,
     build_team_hits_figure,
     build_team_hitting_comparison_figure,
+    build_team_pitching_figure,
     build_team_run_differential_figure,
     build_team_runs_figure,
     build_team_strikeouts_figure,
@@ -92,6 +104,7 @@ from app.web.dependencies import get_db_session
 from app.web.formatting import (
     build_baserunners_summary_cards,
     build_hitting_comparison_summary_cards,
+    build_pitching_summary_cards,
     build_run_differential_summary_cards,
     build_runs_summary_cards,
     build_strikeout_summary_cards,
@@ -99,17 +112,20 @@ from app.web.formatting import (
     format_league_baserunners_backfill_note,
     format_league_baserunners_note,
     format_league_comparison_note,
+    format_league_pitching_note,
     format_league_runs_note,
     format_league_strikeouts_backfill_note,
     format_league_strikeouts_note,
     format_long_date,
     format_missing_opponent_note,
+    format_pitching_comparison_sentence,
     format_pythagorean_note,
 )
 from app.web.navigation import (
     BASERUNNERS_PATH,
     COMPARISON_PATH,
     HITS_PATH,
+    PITCHING_PATH,
     RUN_DIFFERENTIAL_PATH,
     RUNS_PATH,
     STRIKEOUTS_PATH,
@@ -819,6 +835,141 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             request=request, name="run_differential.html", context=context
         )
 
+    @router.get(PITCHING_PATH, response_class=HTMLResponse)
+    def pitching(
+        request: Request,
+        session: Annotated[Session, Depends(get_db_session)],
+        team_id: Annotated[
+            int | None,
+            Query(gt=0, description="MLB team id that has been imported locally."),
+        ] = None,
+        season: Annotated[
+            int | None,
+            Query(gt=0, description="Season that has been imported for the team."),
+        ] = None,
+        window: Annotated[
+            RollingWindowParam,
+            Query(description="Games in the trailing rolling average."),
+        ] = DEFAULT_ROLLING_WINDOW,
+    ) -> Response:
+        """Render pitching trends for one persisted team-season."""
+        try:
+            available = list_available_team_seasons(session)
+        except DatabaseSchemaMissingError as exc:
+            return _render_schema_error(templates, request, settings, exc)
+
+        teams = build_team_options(available)
+        context: dict[str, Any] = {
+            "app_name": settings.app_name,
+            "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
+            "window_options": ROLLING_WINDOW_OPTIONS,
+            "selected_window": window,
+            "selected_team": None,
+            "selected_season": None,
+            "import_command": IMPORT_COMMAND,
+            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
+            "form_action": PITCHING_PATH,
+            "nav_links": build_nav_links(
+                current_path=PITCHING_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
+        }
+
+        if not teams:
+            context["state"] = "empty"
+            return templates.TemplateResponse(
+                request=request, name="pitching.html", context=context
+            )
+
+        selected_team = select_team(teams, team_id)
+        if selected_team is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No games are stored for team id {team_id}. "
+                "Pick a team that has been imported, or import that team."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="pitching.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_team"] = selected_team
+        selected_season = select_season(selected_team, season)
+        if selected_season is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No {season} games are stored for {selected_team.team_name}. "
+                f"Stored seasons: "
+                f"{', '.join(str(value) for value in selected_team.seasons)}."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="pitching.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=PITCHING_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
+        games = list_team_season_pitching(
+            session, team_id=selected_team.team_id, season=selected_season
+        )
+
+        if not games:
+            # The team-season is stored, but it was imported before pitching
+            # was collected. Every pitching column is NOT NULL, so there is no
+            # partial state: either the rows exist or they do not. A re-import
+            # of this team-season is what creates them.
+            context["state"] = "missing_pitching_data"
+            context["reimport_command"] = import_command_for(
+                selected_team.team_id, selected_season
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="pitching.html",
+                context=context,
+                status_code=409,
+            )
+
+        analysis = build_team_pitching_analysis(games, rolling_window=window)
+        league_comparison = _load_league_pitching_comparison(session, analysis)
+        figure = build_team_pitching_figure(analysis, league_comparison)
+
+        context.update(
+            {
+                "state": "ok",
+                "analysis": analysis,
+                "chart_html": render_figure_html(figure, div_id=PITCHING_CHART_DIV_ID),
+                "rolling_average_label": rolling_average_trace_name(window),
+                "summary_cards": build_pitching_summary_cards(
+                    analysis, league_comparison
+                ),
+                "league_comparison": league_comparison,
+                "league_comparison_note": format_league_pitching_note(
+                    league_comparison
+                ),
+                "comparison_sentence": format_pitching_comparison_sentence(
+                    league_comparison, analysis.team_name
+                ),
+                "data_through": format_long_date(analysis.last_game_date),
+            }
+        )
+        return templates.TemplateResponse(
+            request=request, name="pitching.html", context=context
+        )
+
     @router.get(COMPARISON_PATH, response_class=HTMLResponse)
     def hitting_comparison(
         request: Request,
@@ -1106,6 +1257,35 @@ def _load_league_runs_comparison(
     league_games = list_league_season(session, season=analysis.season)
     league = build_league_runs_context(league_games)
     return compare_team_runs_to_league(analysis, league)
+
+
+def _load_league_pitching_comparison(
+    session: Session,
+    analysis: TeamPitchingAnalysis,
+) -> TeamPitchingLeagueComparison | None:
+    """Read MLB pitching context, or None when it is not earned.
+
+    Two conditions must hold. The season's latest league-wide refresh must have
+    reached ``COMPLETE`` coverage, which is the shared Milestone 5 rule. And
+    the season must actually have stored pitching lines: a league season
+    imported before pitching was collected has complete batting coverage and no
+    pitching rows at all, so coverage alone would wrongly promise an MLB ERA.
+
+    Unlike the baserunner backfill there is no partially-known state to report.
+    Every pitching column is NOT NULL, so the rows either exist or they do not,
+    and an absent set yields the plain missing-comparison note rather than
+    backfill guidance.
+    """
+    coverage = get_league_season_ingestion(session, season=analysis.season)
+    if not supports_league_wide_pitching_average(coverage):
+        return None
+
+    league_games = list_league_season_pitching(session, season=analysis.season)
+    if not league_games:
+        return None
+
+    league = build_league_pitching_context(league_games)
+    return compare_team_pitching_to_league(analysis, league)
 
 
 def _load_league_baserunners_comparison(

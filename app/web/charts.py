@@ -25,6 +25,8 @@ from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamHittingComparisonAnalysis,
+    TeamPitchingAnalysis,
+    TeamPitchingLeagueComparison,
     TeamRunDifferentialAnalysis,
     TeamRunDifferentialPoint,
     TeamRunsAnalysis,
@@ -59,6 +61,10 @@ RUNS_Y_AXIS_TITLE = "Runs Scored per Game"
 BASERUNNERS_CHART_DIV_ID = "team-baserunners-chart"
 RAW_BASERUNNERS_TRACE_NAME = "Game Baserunners"
 BASERUNNERS_Y_AXIS_TITLE = "Baserunners per Game"
+
+PITCHING_CHART_DIV_ID = "team-pitching-chart"
+RAW_GAME_ERA_TRACE_NAME = "Game ERA"
+PITCHING_Y_AXIS_TITLE = "Earned Run Average"
 
 RUN_DIFFERENTIAL_CHART_DIV_ID = "team-run-differential-chart"
 WIN_MARGIN_TRACE_NAME = "Win Margin"
@@ -812,6 +818,173 @@ def build_team_baserunners_figure(
             "rangemode": "tozero",
             "tickformat": "d",
             "dtick": 2,
+            "automargin": True,
+        },
+    )
+    return figure
+
+
+def build_team_pitching_figure(
+    analysis: TeamPitchingAnalysis,
+    league_comparison: TeamPitchingLeagueComparison | None = None,
+) -> go.Figure:
+    """Build the ERA figure for one team-season.
+
+    The raw series is each game's own ERA — earned runs per nine innings for
+    that game — so it shares a unit with the rolling line drawn through it. At
+    team level that is a well-behaved series: a team-game is almost always
+    eight to thirteen innings, so 2025 game ERAs ranged 0.00 to 13.50 with a
+    median of 3.00. Plotting raw earned runs instead would put a count and a
+    rate on the same axis.
+
+    The rolling line is the trailing-window **ERA**, aggregated by summing
+    earned runs and outs across the window, not by averaging the game ERAs the
+    markers show. The two are different numbers and the analysis layer is
+    careful about which one this is.
+
+    One reading note the other charts do not need: on this axis **lower is
+    better**. Nothing in the figure encodes that, so the page says it in text.
+    """
+    game_numbers = [point.season_game_number for point in analysis.points]
+    game_dates = [point.game_date for point in analysis.points]
+    game_eras = [point.game_era for point in analysis.points]
+    rolling = [point.rolling_era for point in analysis.points]
+    hover_data = [
+        (
+            format_long_date(point.game_date),
+            format_matchup(point.opponent_name, point.home_away),
+            point.innings_pitched_display,
+            point.earned_runs,
+            point.game_era,
+            point.rolling_era,
+        )
+        for point in analysis.points
+    ]
+    rolling_name = rolling_average_trace_name(analysis.rolling_window)
+    hover_template = (
+        "<b>%{customdata[0]}</b><br>"
+        "%{customdata[1]}<br>"
+        "%{customdata[2]} IP, %{customdata[3]} ER<br>"
+        "Game ERA: %{customdata[4]:.2f}<br>"
+        f"{analysis.rolling_window}-Game ERA: "
+        "%{customdata[5]:.2f}<extra></extra>"
+    )
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=game_eras,
+            customdata=hover_data,
+            name=RAW_GAME_ERA_TRACE_NAME,
+            mode="lines+markers",
+            line={"color": _RAW_LINE, "width": 1.2},
+            # Open circles, as on every other raw series: the markers overlap
+            # heavily across 162 games and an outline stays readable where
+            # filled dots merge.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
+            hovertemplate=hover_template,
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=rolling,
+            customdata=hover_data,
+            name=rolling_name,
+            mode="lines",
+            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
+            hovertemplate=hover_template,
+        )
+    )
+    season_era = analysis.summary.season.era
+    figure.add_trace(
+        go.Scatter(
+            x=[game_numbers[0], game_numbers[-1]],
+            y=[season_era, season_era],
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+            mode="lines",
+            line={"color": _NAVY, "width": 2, "dash": "dash"},
+            hoverinfo="skip",
+        )
+    )
+    if league_comparison is not None:
+        mlb_era = league_comparison.league.era
+        figure.add_trace(
+            go.Scatter(
+                x=[game_numbers[0], game_numbers[-1]],
+                y=[mlb_era, mlb_era],
+                name=MLB_AVERAGE_TRACE_NAME,
+                mode="lines",
+                line={"color": _AMBER, "width": 2, "dash": "dot"},
+                hoverinfo="skip",
+            )
+        )
+
+    # Only one of the two horizontal lines is labelled: they routinely sit
+    # within a tenth of a run of each other, where two labels would overlap.
+    if league_comparison is None:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=season_era,
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+        )
+    else:
+        _label_reference_line(
+            figure,
+            x=game_numbers[-1],
+            y=league_comparison.league.era,
+            name=MLB_AVERAGE_TRACE_NAME,
+        )
+
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
+    figure.update_layout(
+        template="plotly_white",
+        margin=_MARGIN,
+        height=470,
+        hovermode="closest",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
+        },
+        xaxis={
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
+            "zeroline": False,
+            "rangemode": "tozero",
+            "automargin": True,
+        },
+        yaxis={
+            "title": {
+                "text": PITCHING_Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
+            "gridcolor": _GRID,
+            "griddash": "dot",
+            "zeroline": False,
+            # An ERA cannot be negative, and a shutout is a real 0.00, so the
+            # axis starts at zero and grows with the data.
+            "rangemode": "tozero",
             "automargin": True,
         },
     )
