@@ -10,7 +10,7 @@ from app.schemas.analytics import (
     LeagueRunsContext,
     LeagueStrikeoutsContext,
 )
-from app.schemas.games import TeamGameBattingLine
+from app.schemas.games import TeamGameBattingLine, TeamGameRunResult
 
 MARINERS_ID = 136
 MARINERS_NAME = "Seattle Mariners"
@@ -105,6 +105,75 @@ def make_season(
             **({} if runs is None else {"runs": runs[index]}),
         )
         for index, value in enumerate(hits)
+    ]
+
+
+def make_run_result(**overrides: Any) -> TeamGameRunResult:
+    """Build one paired game result, overriding only the fields a test cares about."""
+    base: dict[str, Any] = {
+        "game_pk": 776000,
+        "game_date": OPENING_DAY,
+        "season": 2025,
+        "team_id": MARINERS_ID,
+        "team_name": MARINERS_NAME,
+        "opponent_id": TWINS_ID,
+        "opponent_name": TWINS_NAME,
+        "home_away": "home",
+        "runs_scored": 5,
+        "runs_allowed": 3,
+        "game_number": 1,
+    }
+    base.update(overrides)
+    return TeamGameRunResult(**base)
+
+
+def make_run_result_season(
+    runs_scored: Sequence[int],
+    runs_allowed: Sequence[int],
+    *,
+    team_id: int = MARINERS_ID,
+    team_name: str = MARINERS_NAME,
+    season: int = 2025,
+    start_date: date | None = None,
+) -> list[TeamGameRunResult]:
+    """Build one paired game per score pair, on consecutive days, in season order.
+
+    Game ids are derived from the season the same way ``make_season`` derives
+    them, so a test can build a team's batting lines and its paired results for
+    the same season and have the two agree on ``game_pk``.
+
+    Real completed games are never tied, so a tied pair is rejected here rather
+    than silently producing a game that could not have happened.
+    """
+    if len(runs_scored) != len(runs_allowed):
+        raise ValueError(
+            f"runs_scored has {len(runs_scored)} values but runs_allowed has "
+            f"{len(runs_allowed)}"
+        )
+    tied = [
+        index
+        for index, (scored, allowed) in enumerate(
+            zip(runs_scored, runs_allowed, strict=True)
+        )
+        if scored == allowed
+    ]
+    if tied:
+        raise ValueError(
+            f"A completed MLB game cannot end tied, but games {tied} are tied"
+        )
+    opening_day = start_date or date(season, OPENING_DAY.month, OPENING_DAY.day)
+    return [
+        make_run_result(
+            game_pk=season * 1000 + index,
+            game_date=opening_day + timedelta(days=index),
+            season=season,
+            team_id=team_id,
+            team_name=team_name,
+            home_away="home" if index % 2 == 0 else "away",
+            runs_scored=scored,
+            runs_allowed=runs_allowed[index],
+        )
+        for index, scored in enumerate(runs_scored)
     ]
 
 

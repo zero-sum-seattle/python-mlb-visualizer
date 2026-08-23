@@ -4,11 +4,15 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.database.models import LeagueSeasonIngestionRecord, TeamGameBattingLineRecord
 from app.schemas.catalog import AvailableTeamSeason
-from app.schemas.games import TeamGameBattingLine
+from app.schemas.games import (
+    TeamGameBattingLine,
+    TeamGameRunResult,
+    TeamSeasonRunResults,
+)
 from app.schemas.ingestion import (
     LeagueSeasonIngestionState,
     LeagueSeasonIngestionStatus,
@@ -148,6 +152,75 @@ def list_league_season(
     )
     records = session.scalars(stmt).all()
     return [record.to_domain() for record in records]
+
+
+def list_team_season_run_results(
+    session: Session,
+    *,
+    team_id: int,
+    season: int,
+) -> TeamSeasonRunResults:
+    """Pair a team-season's games with the opponent's stored line for each game.
+
+    Runs allowed is the opponent's runs scored in the same game, so this is an
+    outer self-join of ``team_game_batting_lines`` onto itself on ``game_pk``,
+    matching the opponent row by ``team_id``. No MLB request is involved and no
+    runs-allowed column exists; the figure is already in the table, on the other
+    team's row.
+
+    The join is an outer join on purpose. A team-season imported on its own has
+    no opponent rows at all, and an inner join would quietly return zero games
+    for it — indistinguishable from a team that has not been imported. Instead
+    the unpaired ``game_pk`` values are reported so the caller can say which
+    state it is in.
+
+    Games are returned in the same chart order as ``list_team_season``.
+    """
+    opponent = aliased(TeamGameBattingLineRecord, name="opponent")
+    stmt = (
+        select(TeamGameBattingLineRecord, opponent)
+        .outerjoin(
+            opponent,
+            (opponent.game_pk == TeamGameBattingLineRecord.game_pk)
+            & (opponent.team_id == TeamGameBattingLineRecord.opponent_id),
+        )
+        .where(
+            TeamGameBattingLineRecord.team_id == team_id,
+            TeamGameBattingLineRecord.season == season,
+        )
+        .order_by(
+            TeamGameBattingLineRecord.game_date,
+            TeamGameBattingLineRecord.game_number,
+            TeamGameBattingLineRecord.game_pk,
+        )
+    )
+
+    results: list[TeamGameRunResult] = []
+    unpaired: list[int] = []
+    for row, opponent_row in session.execute(stmt):
+        if opponent_row is None:
+            unpaired.append(row.game_pk)
+            continue
+        results.append(
+            TeamGameRunResult(
+                game_pk=row.game_pk,
+                game_date=row.game_date,
+                season=row.season,
+                team_id=row.team_id,
+                team_name=row.team_name,
+                opponent_id=row.opponent_id,
+                opponent_name=row.opponent_name,
+                home_away=row.home_away,
+                runs_scored=row.runs,
+                runs_allowed=opponent_row.runs,
+                game_number=row.game_number,
+            )
+        )
+
+    return TeamSeasonRunResults(
+        results=tuple(results),
+        unpaired_game_pks=tuple(unpaired),
+    )
 
 
 def upsert_team_season(

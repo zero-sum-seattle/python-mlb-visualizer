@@ -936,3 +936,250 @@ class TeamBaserunnersLeagueComparison(BaseModel):
                 f"({expected})"
             )
         return self
+
+
+class TeamRunDifferentialPoint(BaseModel):
+    """One completed game plotted on the team run differential chart.
+
+    Unlike every other per-game point in this module, ``run_differential`` is
+    signed: a team can be outscored, and the chart's zero line is the whole
+    point of the page.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    game_pk: int = Field(gt=0, description="MLB game identifier.")
+    game_number: int = Field(
+        ge=1,
+        description="MLB game number on the date, 2 for the second game of a "
+        "doubleheader. Used for ordering, not for the x axis.",
+    )
+    season_game_number: int = Field(
+        ge=1,
+        description="Continuous 1-based position of the game within the season.",
+    )
+    game_date: date = Field(description="Official date the game counts against.")
+    opponent_name: str = Field(
+        min_length=1, description="Display name of the opponent."
+    )
+    home_away: HomeAway = Field(description="Whether the team was home or away.")
+    runs_scored: int = Field(ge=0, description="Runs scored by the team.")
+    runs_allowed: int = Field(
+        ge=0, description="Runs scored by the opponent in the same game."
+    )
+    run_differential: int = Field(
+        description="runs_scored - runs_allowed. Negative when outscored."
+    )
+    is_win: bool = Field(description="Whether the team outscored the opponent.")
+    rolling_average: float = Field(
+        description="Trailing rolling run-differential average ending at this game. "
+        "Signed, so this field has no lower bound.",
+    )
+
+    @model_validator(mode="after")
+    def _differential_and_result_match_the_runs(self) -> TeamRunDifferentialPoint:
+        expected = self.runs_scored - self.runs_allowed
+        if self.run_differential != expected:
+            raise ValueError(
+                f"run_differential ({self.run_differential}) must equal "
+                f"runs_scored - runs_allowed ({expected})"
+            )
+        if self.is_win != (self.runs_scored > self.runs_allowed):
+            raise ValueError(
+                f"is_win ({self.is_win}) must equal runs_scored > runs_allowed "
+                f"({self.runs_scored} > {self.runs_allowed})"
+            )
+        return self
+
+
+class PythagoreanRecord(BaseModel):
+    """Expected record from runs scored and allowed, beside the actual record.
+
+    Pythagorean expectation estimates the winning percentage a team's run
+    scoring and run prevention *should* have produced, using the Bill James
+    formula with the exponent 1.83 that Baseball Reference settled on::
+
+        expected_win_pct = RS^1.83 / (RS^1.83 + RA^1.83)
+
+    The gap between expected and actual is the interesting number. A team well
+    above its expectation has usually won a lot of close games and lost a few
+    blowouts, which historically does not persist; a team below it has usually
+    done the reverse. It is a description of what has already happened, not a
+    forecast, and one season is a small enough sample that a few games of gap
+    is noise.
+
+    The formula is undefined when a team has neither scored nor allowed a run,
+    which cannot happen across any real completed game, so it is not modelled.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    exponent: float = Field(
+        gt=0, description="Exponent used in the Pythagorean formula."
+    )
+    runs_scored: int = Field(ge=0, description="Runs scored across the season.")
+    runs_allowed: int = Field(ge=0, description="Runs allowed across the season.")
+    expected_win_pct: float = Field(
+        ge=0, le=1, description="Pythagorean expected winning percentage."
+    )
+    expected_wins: float = Field(
+        ge=0, description="expected_win_pct * games_played, not rounded."
+    )
+    actual_wins: int = Field(ge=0, description="Games the team outscored the opponent.")
+    actual_losses: int = Field(ge=0, description="Games the team was outscored.")
+    actual_win_pct: float = Field(
+        ge=0, le=1, description="actual_wins / (actual_wins + actual_losses)."
+    )
+    wins_above_expectation: float = Field(
+        description="actual_wins - expected_wins. Positive means the team has won "
+        "more than its run scoring and prevention alone would predict.",
+    )
+
+    @model_validator(mode="after")
+    def _record_is_internally_consistent(self) -> PythagoreanRecord:
+        games = self.actual_wins + self.actual_losses
+        if games == 0:
+            raise ValueError("A Pythagorean record needs at least one decided game")
+
+        expected_pct = self.runs_scored**self.exponent / (
+            self.runs_scored**self.exponent + self.runs_allowed**self.exponent
+        )
+        if not isclose(self.expected_win_pct, expected_pct, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"expected_win_pct ({self.expected_win_pct}) must equal "
+                f"RS^{self.exponent} / (RS^{self.exponent} + RA^{self.exponent}) "
+                f"({expected_pct})"
+            )
+        if not isclose(
+            self.expected_wins,
+            self.expected_win_pct * games,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(
+                f"expected_wins ({self.expected_wins}) must equal expected_win_pct "
+                f"* games played ({self.expected_win_pct * games})"
+            )
+        if not isclose(
+            self.actual_win_pct, self.actual_wins / games, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            raise ValueError(
+                f"actual_win_pct ({self.actual_win_pct}) must equal actual_wins / "
+                f"games played ({self.actual_wins / games})"
+            )
+        if not isclose(
+            self.wins_above_expectation,
+            self.actual_wins - self.expected_wins,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(
+                f"wins_above_expectation ({self.wins_above_expectation}) must equal "
+                f"actual_wins - expected_wins "
+                f"({self.actual_wins - self.expected_wins})"
+            )
+        return self
+
+
+class TeamRunDifferentialSummary(BaseModel):
+    """Headline numbers describing a team-season's run differential.
+
+    ``season_average`` is the single authoritative season average, read by the
+    chart's reference line and the summary cards alike, so the page cannot show
+    two different figures for the same statistic.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    games_played: int = Field(ge=1, description="Completed games analysed.")
+    total_runs_scored: int = Field(ge=0, description="Runs scored across the season.")
+    total_runs_allowed: int = Field(ge=0, description="Runs allowed across the season.")
+    total_run_differential: int = Field(
+        description="total_runs_scored - total_runs_allowed. Signed."
+    )
+    season_average: float = Field(
+        description="Run differential per game across the stored completed games. "
+        "Signed, so this field has no lower bound.",
+    )
+    recent_average: float = Field(
+        description="Run differential per game over the most recent rolling window."
+    )
+    prior_window_average: float | None = Field(
+        default=None,
+        description="Run differential per game over the window immediately before "
+        "the recent one, or None when two complete windows do not exist.",
+    )
+    change_vs_prior_window: float | None = Field(
+        default=None,
+        description="recent_average - prior_window_average, or None.",
+    )
+
+    @model_validator(mode="after")
+    def _totals_and_windows_agree(self) -> TeamRunDifferentialSummary:
+        expected_total = self.total_runs_scored - self.total_runs_allowed
+        if self.total_run_differential != expected_total:
+            raise ValueError(
+                f"total_run_differential ({self.total_run_differential}) must equal "
+                f"total_runs_scored - total_runs_allowed ({expected_total})"
+            )
+        expected_average = self.total_run_differential / self.games_played
+        if not isclose(
+            self.season_average, expected_average, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            raise ValueError(
+                f"season_average ({self.season_average}) must equal "
+                f"total_run_differential / games_played ({expected_average})"
+            )
+        has_prior = self.prior_window_average is not None
+        has_change = self.change_vs_prior_window is not None
+        if has_prior != has_change:
+            raise ValueError(
+                "prior_window_average and change_vs_prior_window must both be "
+                "present or both be None"
+            )
+        return self
+
+
+class TeamRunDifferentialAnalysis(BaseModel):
+    """A team-season's run differential trend and Pythagorean record, ready to chart."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id.")
+    team_name: str = Field(min_length=1, description="Historical name for the season.")
+    season: int = Field(gt=0, description="Season analysed.")
+    rolling_window: int = Field(ge=1, description="Games in the trailing window.")
+    points: tuple[TeamRunDifferentialPoint, ...] = Field(
+        min_length=1, description="Games in chart order."
+    )
+    summary: TeamRunDifferentialSummary
+    pythagorean: PythagoreanRecord
+
+    @model_validator(mode="after")
+    def _summary_matches_points(self) -> TeamRunDifferentialAnalysis:
+        if self.summary.games_played != len(self.points):
+            raise ValueError(
+                "summary.games_played must equal the number of chart points"
+            )
+        decided = self.pythagorean.actual_wins + self.pythagorean.actual_losses
+        if decided != len(self.points):
+            raise ValueError(
+                f"pythagorean wins plus losses ({decided}) must equal the number "
+                f"of chart points ({len(self.points)})"
+            )
+        if self.pythagorean.runs_scored != self.summary.total_runs_scored:
+            raise ValueError(
+                f"pythagorean.runs_scored ({self.pythagorean.runs_scored}) must "
+                f"equal summary.total_runs_scored ({self.summary.total_runs_scored})"
+            )
+        if self.pythagorean.runs_allowed != self.summary.total_runs_allowed:
+            raise ValueError(
+                f"pythagorean.runs_allowed ({self.pythagorean.runs_allowed}) must "
+                f"equal summary.total_runs_allowed ({self.summary.total_runs_allowed})"
+            )
+        return self
+
+    @property
+    def last_game_date(self) -> date:
+        """Date of the most recent completed game in the analysis."""
+        return self.points[-1].game_date

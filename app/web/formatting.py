@@ -9,6 +9,7 @@ from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamHittingComparisonAnalysis,
+    TeamRunDifferentialAnalysis,
     TeamRunsAnalysis,
     TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
@@ -20,6 +21,7 @@ HITS_PER_GAME_CAPTION = "Hits per Game"
 STRIKEOUTS_PER_GAME_CAPTION = "Batting Strikeouts per Game"
 RUNS_PER_GAME_CAPTION = "Runs Scored per Game"
 BASERUNNERS_PER_GAME_CAPTION = "Baserunners per Game"
+RUN_DIFFERENTIAL_PER_GAME_CAPTION = "Run Differential per Game"
 NORMALIZED_INDEX_CAPTION = "MLB Avg = 100"
 NO_LEAGUE_COMPARISON_VALUE = "—"
 NO_LEAGUE_COMPARISON_CAPTION = "Comparison unavailable"
@@ -497,4 +499,135 @@ def format_league_baserunners_backfill_note(
         f"baserunner components were persisted. They are not counted as zero "
         f"and the rest are not presented as MLB overall. Re-import the league "
         f"season to backfill them: {reimport_command}"
+    )
+
+
+def build_run_differential_summary_cards(
+    analysis: TeamRunDifferentialAnalysis,
+) -> list[SummaryCard]:
+    """Round the analysis for display only; the calculations keep full precision.
+
+    Four cards, like every other metric page, but the third is the Pythagorean
+    record rather than a comparison against MLB. There is no MLB run
+    differential to compare against — league-wide it is zero by construction,
+    since every run scored is a run allowed — so the slot that holds ``vs MLB``
+    elsewhere holds the expected record here.
+
+    Every signed figure is rendered with an explicit sign. ``+0.42`` and
+    ``-0.42`` are opposite seasons, and a bare ``0.42`` in a column of numbers
+    invites a reader to miss which one they are looking at.
+    """
+    summary = analysis.summary
+    pythagorean = analysis.pythagorean
+    window = analysis.rolling_window
+
+    return [
+        SummaryCard(
+            label=f"Recent {window}-Game Avg",
+            value=f"{summary.recent_average:+.2f}",
+            caption=RUN_DIFFERENTIAL_PER_GAME_CAPTION,
+        ),
+        SummaryCard(
+            label="Season Run Differential",
+            value=f"{summary.total_run_differential:+d}",
+            caption=(
+                f"{summary.total_runs_scored:,} Scored, "
+                f"{summary.total_runs_allowed:,} Allowed"
+            ),
+        ),
+        SummaryCard(
+            label="Pythagorean Record",
+            value=(
+                f"{pythagorean.expected_wins:.1f}-"
+                f"{len(analysis.points) - pythagorean.expected_wins:.1f}"
+            ),
+            caption=f"Expected {format_win_pct(pythagorean.expected_win_pct)}",
+        ),
+        SummaryCard(
+            label="Actual Record",
+            value=f"{pythagorean.actual_wins}-{pythagorean.actual_losses}",
+            caption=(
+                f"{format_win_pct(pythagorean.actual_win_pct)}, "
+                f"{pythagorean.wins_above_expectation:+.1f} vs Expected"
+            ),
+        ),
+    ]
+
+
+def format_win_pct(value: float) -> str:
+    """Render a winning percentage the way baseball writes it: ``.512``.
+
+    Baseball drops the leading zero and shows three decimal places. A perfect
+    or winless season is written ``1.000`` and ``.000``, so the leading digit
+    is kept only when it is not a zero.
+    """
+    rendered = f"{value:.3f}"
+    return rendered[1:] if rendered.startswith("0.") else rendered
+
+
+def format_pythagorean_note(analysis: TeamRunDifferentialAnalysis) -> str:
+    """Explain what the expected-versus-actual gap does and does not mean.
+
+    The gap is the reason the Pythagorean record is on the page at all, and it
+    is the number most likely to be over-read. The wording says what it
+    describes — games already played — and avoids implying it forecasts
+    anything.
+    """
+    gap = analysis.pythagorean.wins_above_expectation
+    exponent = analysis.pythagorean.exponent
+    basis = (
+        f"Expected record from runs scored and allowed, using the Pythagorean "
+        f"formula with exponent {exponent}."
+    )
+
+    # Under a game either way is smaller than the rounding on a single blowout
+    # and should not be narrated as a finding.
+    if abs(gap) < 1:
+        return (
+            f"{basis} {analysis.team_name}'s actual record is within a game of "
+            f"it, so run scoring and run prevention alone account for the "
+            f"season so far."
+        )
+
+    games = abs(gap)
+    game_word = "game" if round(games, 1) == 1.0 else "games"
+    direction = "above" if gap > 0 else "below"
+    explanation = (
+        "usually meaning close games won and blowouts lost"
+        if gap > 0
+        else "usually meaning close games lost and blowouts won"
+    )
+    return (
+        f"{basis} {analysis.team_name} is {games:.1f} {game_word} {direction} "
+        f"that expectation, {explanation}. It describes games already played "
+        f"rather than predicting the rest of the season."
+    )
+
+
+def format_missing_opponent_note(
+    *,
+    season: int,
+    missing_game_count: int,
+    total_games: int,
+    league_import_command: str,
+) -> str:
+    """Say that opponent lines are missing, and how to fix it.
+
+    Unlike the batting strikeout and baserunner backfill notes, nothing is
+    wrong with this team's own rows and re-importing the team will not help.
+    Runs allowed lives on the opponents' rows, which a single-team import never
+    fetches, so the remedy named here is a league-season import.
+    """
+    # One missing game is as disqualifying as a hundred: without it, both the
+    # run differential and the record derived from it are wrong.
+    game_word = "game" if missing_game_count == 1 else "games"
+    has_have = "has" if missing_game_count == 1 else "have"
+    them = "it" if missing_game_count == 1 else "them"
+    return (
+        f"Run differential unavailable. {missing_game_count:,} of the "
+        f"{total_games:,} {season} {game_word} stored for this team {has_have} "
+        f"no opponent line, so runs allowed is unknown for {them}. "
+        f"Runs allowed comes from the opponent's own record, which a "
+        f"single-team import does not fetch. Import the league season to pair "
+        f"every game: {league_import_command}"
     )
