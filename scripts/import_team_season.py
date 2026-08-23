@@ -48,17 +48,30 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def format_table(result: TeamSeasonIngestionResult) -> str:
-    """Format an ingestion result for human-readable output."""
-    return "\n".join(
-        [
-            f"Team: {result.team_name}",
-            f"Season: {result.season}",
-            f"Fetched: {result.fetched}",
-            f"Inserted: {result.inserted}",
-            f"Updated: {result.updated}",
-            f"Unchanged: {result.unchanged}",
-        ]
-    )
+    """Format an ingestion result for human-readable output.
+
+    The unlabelled counts are batting lines, which is what they have always
+    meant. Pitching lines land in their own table from their own request, so
+    they are reported on their own rows rather than folded into the totals.
+    """
+    rows = [
+        f"Team: {result.team_name}",
+        f"Season: {result.season}",
+        f"Fetched: {result.fetched}",
+        f"Inserted: {result.inserted}",
+        f"Updated: {result.updated}",
+        f"Unchanged: {result.unchanged}",
+    ]
+    if result.pitching is not None:
+        rows.extend(
+            [
+                f"Pitching fetched: {result.pitching.fetched}",
+                f"Pitching inserted: {result.pitching.inserted}",
+                f"Pitching updated: {result.pitching.updated}",
+                f"Pitching unchanged: {result.pitching.unchanged}",
+            ]
+        )
+    return "\n".join(rows)
 
 
 def format_json(result: TeamSeasonIngestionResult) -> str:

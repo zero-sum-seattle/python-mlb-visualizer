@@ -80,6 +80,10 @@ class FakeMlb:
         self._team_stats = team_stats if team_stats is not None else {}
         self._schedule = schedule
         self.calls: dict[str, dict[str, Any]] = {}
+        # One entry per get_team_stats call, so a test can assert how many
+        # requests were made and which groups they asked for. ``calls`` keeps
+        # only the most recent of each method.
+        self.stat_group_calls: list[tuple[str, ...]] = []
         self.closed = False
 
     @staticmethod
@@ -105,7 +109,15 @@ class FakeMlb:
             "groups": groups,
             **params,
         }
-        return self._resolve(self._team_stats)
+        self.stat_group_calls.append(tuple(groups))
+        resolved = self._resolve(self._team_stats)
+        if not isinstance(resolved, dict):
+            return resolved
+        # The real client returns only the stat groups that were asked for, so
+        # a fake holding both must not hand back the other one. A service that
+        # read the wrong group would otherwise pass here and fail in
+        # production.
+        return {group: resolved[group] for group in groups if group in resolved}
 
     def get_schedule(self, **params: Any) -> Schedule | None:
         self.calls["get_schedule"] = params
@@ -124,10 +136,20 @@ class FakeMlb:
 def make_client(
     game_log: str = "cubs_2025_hitting_game_log",
     schedule: str = "cubs_2025_schedule",
+    pitching_game_log: str | None = "cubs_2025_pitching_game_log",
 ) -> FakeMlb:
-    """Build a fake client backed by the named fixtures."""
+    """Build a fake client backed by the named fixtures.
+
+    Serves both stat groups by default, the way the real client does for a
+    team that has played. Pass ``pitching_game_log=None`` for a client that
+    knows only about hitting, which is what a test of the batting path alone
+    wants.
+    """
+    blocks = list(load_payload(game_log)["stats"])
+    if pitching_game_log is not None:
+        blocks.extend(load_payload(pitching_game_log)["stats"])
     return FakeMlb(
-        team_stats=build_team_stats(load_payload(game_log)),
+        team_stats=build_team_stats({"stats": blocks}),
         schedule=build_schedule(load_payload(schedule)),
     )
 

@@ -1,15 +1,21 @@
-"""Repository functions for game batting line and league ingestion persistence."""
+"""Repository functions for game line and league ingestion persistence."""
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, aliased
 
-from app.database.models import LeagueSeasonIngestionRecord, TeamGameBattingLineRecord
+from app.database.models import (
+    LeagueSeasonIngestionRecord,
+    TeamGameBattingLineRecord,
+    TeamGamePitchingLineRecord,
+)
 from app.schemas.catalog import AvailableTeamSeason
 from app.schemas.games import (
     TeamGameBattingLine,
+    TeamGamePitchingLine,
     TeamGameRunResult,
     TeamSeasonRunResults,
 )
@@ -18,6 +24,11 @@ from app.schemas.ingestion import (
     LeagueSeasonIngestionStatus,
     TeamGamePersistenceResult,
 )
+
+# The two line tables the generic upsert below reconciles. They hold different
+# columns but expose the same to_domain / apply_domain / from_domain interface.
+TeamGameLine = TeamGameBattingLine | TeamGamePitchingLine
+TeamGameLineRecord = TeamGameBattingLineRecord | TeamGamePitchingLineRecord
 
 MIGRATION_HINT = "poetry run alembic upgrade head"
 
@@ -223,6 +234,60 @@ def list_team_season_run_results(
     )
 
 
+def list_team_season_pitching(
+    session: Session,
+    *,
+    team_id: int,
+    season: int,
+) -> list[TeamGamePitchingLine]:
+    """Return persisted pitching lines for a team-season in chart order.
+
+    A team-season imported before pitching was persisted simply has no rows
+    here, which is what an empty list means. There is no partially-populated
+    state to guard against: every column on the pitching table is NOT NULL.
+    """
+    stmt = (
+        select(TeamGamePitchingLineRecord)
+        .where(
+            TeamGamePitchingLineRecord.team_id == team_id,
+            TeamGamePitchingLineRecord.season == season,
+        )
+        .order_by(
+            TeamGamePitchingLineRecord.game_date,
+            TeamGamePitchingLineRecord.game_number,
+            TeamGamePitchingLineRecord.game_pk,
+        )
+    )
+    records = session.scalars(stmt).all()
+    return [record.to_domain() for record in records]
+
+
+def list_league_season_pitching(
+    session: Session,
+    *,
+    season: int,
+) -> list[TeamGamePitchingLine]:
+    """Return every persisted pitching line for a season, across all teams.
+
+    The pitching counterpart of ``list_league_season``, and it answers the same
+    limited question: what is stored, not whether that is actually MLB-wide.
+    The recorded league-season coverage state is what says whether the stored
+    rows may be described as covering the league.
+    """
+    stmt = (
+        select(TeamGamePitchingLineRecord)
+        .where(TeamGamePitchingLineRecord.season == season)
+        .order_by(
+            TeamGamePitchingLineRecord.team_id,
+            TeamGamePitchingLineRecord.game_date,
+            TeamGamePitchingLineRecord.game_number,
+            TeamGamePitchingLineRecord.game_pk,
+        )
+    )
+    records = session.scalars(stmt).all()
+    return [record.to_domain() for record in records]
+
+
 def upsert_team_season(
     session: Session,
     *,
@@ -231,6 +296,41 @@ def upsert_team_season(
     """Insert, update, or leave unchanged rows for a batch of domain lines.
 
     Does not commit or roll back. Rows absent from ``lines`` are not deleted.
+    """
+    return _upsert_team_season_lines(
+        session, lines=lines, record_type=TeamGameBattingLineRecord
+    )
+
+
+def upsert_team_season_pitching(
+    session: Session,
+    *,
+    lines: list[TeamGamePitchingLine],
+) -> TeamGamePersistenceResult:
+    """Insert, update, or leave unchanged pitching rows for a batch of domain lines.
+
+    Does not commit or roll back. Rows absent from ``lines`` are not deleted.
+    """
+    return _upsert_team_season_lines(
+        session, lines=lines, record_type=TeamGamePitchingLineRecord
+    )
+
+
+def _upsert_team_season_lines(
+    session: Session,
+    *,
+    lines: Sequence[TeamGameLine],
+    record_type: type[TeamGameLineRecord],
+) -> TeamGamePersistenceResult:
+    """Upsert one team-season's lines into whichever table holds them.
+
+    Batting and pitching lines are stored in different tables with different
+    columns, but the reconciliation is identical: match on ``(team_id,
+    game_pk)``, refuse a game already stored under another team, update only
+    rows whose values actually changed, and leave rows absent from ``lines``
+    alone. The two record classes expose the same ``to_domain`` /
+    ``apply_domain`` / ``from_domain`` interface, so that logic lives here once
+    rather than being kept in step across two near-identical copies.
     """
     if not lines:
         return TeamGamePersistenceResult(inserted=0, updated=0, unchanged=0)
@@ -244,16 +344,16 @@ def upsert_team_season(
             )
 
     existing = session.scalars(
-        select(TeamGameBattingLineRecord).where(
-            TeamGameBattingLineRecord.team_id == team_id,
-            TeamGameBattingLineRecord.season == season,
+        select(record_type).where(
+            record_type.team_id == team_id,
+            record_type.season == season,
         )
     ).all()
 
-    by_team_game: dict[tuple[int, int], TeamGameBattingLineRecord] = {
+    by_team_game: dict[tuple[int, int], TeamGameLineRecord] = {
         (record.team_id, record.game_pk): record for record in existing
     }
-    by_game_pk: dict[int, TeamGameBattingLineRecord] = {
+    by_game_pk: dict[int, TeamGameLineRecord] = {
         record.game_pk: record for record in existing
     }
 
@@ -272,9 +372,7 @@ def upsert_team_season(
                     f"Game {line.game_pk} is already stored for team "
                     f"{conflict.team_id}, cannot store for team {line.team_id}"
                 )
-            new_record = TeamGameBattingLineRecord.from_domain(
-                line, created_at=now, updated_at=now
-            )
+            new_record = record_type.from_domain(line, created_at=now, updated_at=now)
             session.add(new_record)
             by_team_game[key] = new_record
             by_game_pk[line.game_pk] = new_record

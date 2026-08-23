@@ -115,7 +115,12 @@ def build_source(
 ) -> TeamSource:
     """Build one club's fixture data, retargeted from the captured Cubs season."""
     game_log = retarget(load_payload("cubs_2025_hitting_game_log"), team_id, team_name)
+    pitching_log = retarget(
+        load_payload("cubs_2025_pitching_game_log"), team_id, team_name
+    )
     raw_schedule = retarget(load_payload("cubs_2025_schedule"), team_id, team_name)
+    # Both stat groups in one payload, the way a club that has played has both.
+    both_groups = {"stats": [*game_log["stats"], *pitching_log["stats"]]}
     return TeamSource(
         team=Team(
             id=team_id,
@@ -123,7 +128,9 @@ def build_source(
             name=team_name,
             sport=MLB_SPORT,
         ),
-        team_stats=team_stats if team_stats is not None else build_team_stats(game_log),
+        team_stats=(
+            team_stats if team_stats is not None else build_team_stats(both_groups)
+        ),
         schedule=schedule if schedule is not None else build_schedule(raw_schedule),
     )
 
@@ -161,7 +168,11 @@ class FakeLeagueMlb:
         **params: Any,
     ) -> dict[str, Any]:
         self.team_stats_calls.append(team_id)
-        return self._resolve(self._sources[team_id].team_stats)
+        resolved = self._resolve(self._sources[team_id].team_stats)
+        if not isinstance(resolved, dict):
+            return resolved
+        # The real client returns only the groups asked for.
+        return {group: resolved[group] for group in groups if group in resolved}
 
     def get_schedule(self, **params: Any) -> Schedule | None:
         return self._resolve(self._sources[params["team_id"]].schedule)
@@ -774,7 +785,17 @@ def test_every_club_after_the_failure_is_still_attempted(
 ) -> None:
     client = league_client_missing_one_mariners_game()
     ingest_league_season(session=migrated_session, season=SEASON, client=client)
-    assert client.team_stats_calls == [CUBS_ID, MARINERS_ID, NATIONALS_ID]
+    # Two stat-group requests per club, hitting then pitching. The Mariners
+    # appear once because their hitting log is short: the failure is raised
+    # before their pitching log is ever asked for, which is the point of
+    # fetching everything before writing anything.
+    assert client.team_stats_calls == [
+        CUBS_ID,
+        CUBS_ID,
+        MARINERS_ID,
+        NATIONALS_ID,
+        NATIONALS_ID,
+    ]
 
 
 def test_the_short_team_season_writes_no_partial_rows(
