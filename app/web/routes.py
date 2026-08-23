@@ -43,6 +43,10 @@ from app.analytics.team_hitting_comparison import (
     InvalidComparisonBaselineError,
     build_team_hitting_comparison_analysis,
 )
+from app.analytics.team_run_differential import (
+    MissingOpponentDataError,
+    build_team_run_differential_analysis,
+)
 from app.analytics.team_runs import build_team_runs_analysis
 from app.analytics.team_strikeouts import (
     MissingStrikeoutDataError,
@@ -56,6 +60,7 @@ from app.database.repositories import (
     list_available_team_seasons,
     list_league_season,
     list_team_season,
+    list_team_season_run_results,
 )
 from app.schemas.analytics import (
     TeamBaserunnersAnalysis,
@@ -70,11 +75,13 @@ from app.schemas.analytics import (
 from app.web.charts import (
     BASERUNNERS_CHART_DIV_ID,
     COMPARISON_CHART_DIV_ID,
+    RUN_DIFFERENTIAL_CHART_DIV_ID,
     RUNS_CHART_DIV_ID,
     STRIKEOUTS_CHART_DIV_ID,
     build_team_baserunners_figure,
     build_team_hits_figure,
     build_team_hitting_comparison_figure,
+    build_team_run_differential_figure,
     build_team_runs_figure,
     build_team_strikeouts_figure,
     plotly_bundle_javascript,
@@ -85,6 +92,7 @@ from app.web.dependencies import get_db_session
 from app.web.formatting import (
     build_baserunners_summary_cards,
     build_hitting_comparison_summary_cards,
+    build_run_differential_summary_cards,
     build_runs_summary_cards,
     build_strikeout_summary_cards,
     build_summary_cards,
@@ -95,11 +103,14 @@ from app.web.formatting import (
     format_league_strikeouts_backfill_note,
     format_league_strikeouts_note,
     format_long_date,
+    format_missing_opponent_note,
+    format_pythagorean_note,
 )
 from app.web.navigation import (
     BASERUNNERS_PATH,
     COMPARISON_PATH,
     HITS_PATH,
+    RUN_DIFFERENTIAL_PATH,
     RUNS_PATH,
     STRIKEOUTS_PATH,
     build_nav_links,
@@ -666,6 +677,146 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
         )
         return templates.TemplateResponse(
             request=request, name="baserunners.html", context=context
+        )
+
+    @router.get(RUN_DIFFERENTIAL_PATH, response_class=HTMLResponse)
+    def run_differential(
+        request: Request,
+        session: Annotated[Session, Depends(get_db_session)],
+        team_id: Annotated[
+            int | None,
+            Query(gt=0, description="MLB team id that has been imported locally."),
+        ] = None,
+        season: Annotated[
+            int | None,
+            Query(gt=0, description="Season that has been imported for the team."),
+        ] = None,
+        window: Annotated[
+            RollingWindowParam,
+            Query(description="Games in the trailing rolling average."),
+        ] = DEFAULT_ROLLING_WINDOW,
+    ) -> Response:
+        """Render run differential and Pythagorean record for one team-season."""
+        try:
+            available = list_available_team_seasons(session)
+        except DatabaseSchemaMissingError as exc:
+            return _render_schema_error(templates, request, settings, exc)
+
+        teams = build_team_options(available)
+        context: dict[str, Any] = {
+            "app_name": settings.app_name,
+            "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
+            "window_options": ROLLING_WINDOW_OPTIONS,
+            "selected_window": window,
+            "selected_team": None,
+            "selected_season": None,
+            "import_command": IMPORT_COMMAND,
+            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
+            "form_action": RUN_DIFFERENTIAL_PATH,
+            "nav_links": build_nav_links(
+                current_path=RUN_DIFFERENTIAL_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
+        }
+
+        if not teams:
+            context["state"] = "empty"
+            return templates.TemplateResponse(
+                request=request, name="run_differential.html", context=context
+            )
+
+        selected_team = select_team(teams, team_id)
+        if selected_team is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No games are stored for team id {team_id}. "
+                "Pick a team that has been imported, or import that team."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="run_differential.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_team"] = selected_team
+        selected_season = select_season(selected_team, season)
+        if selected_season is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No {season} games are stored for {selected_team.team_name}. "
+                f"Stored seasons: "
+                f"{', '.join(str(value) for value in selected_team.seasons)}."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="run_differential.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=RUN_DIFFERENTIAL_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
+        run_results = list_team_season_run_results(
+            session, team_id=selected_team.team_id, season=selected_season
+        )
+
+        try:
+            analysis = build_team_run_differential_analysis(
+                run_results.results,
+                unpaired_game_count=len(run_results.unpaired_game_pks),
+                rolling_window=window,
+            )
+        except MissingOpponentDataError as exc:
+            # The opponents' rows are absent, so runs allowed is unknown for
+            # those games. Charting them would mean inventing a total or
+            # quietly analysing a subset, either of which produces a run
+            # differential that looks right and is not.
+            context["state"] = "missing_opponent_data"
+            context["missing_message"] = format_missing_opponent_note(
+                season=selected_season,
+                missing_game_count=exc.missing_game_count,
+                total_games=exc.total_games,
+                league_import_command=league_import_command_for(selected_season),
+            )
+            context["games_missing"] = exc.missing_game_count
+            context["games_total"] = exc.total_games
+            context["league_import_command"] = league_import_command_for(
+                selected_season
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="run_differential.html",
+                context=context,
+                status_code=409,
+            )
+
+        figure = build_team_run_differential_figure(analysis)
+        context.update(
+            {
+                "state": "ok",
+                "analysis": analysis,
+                "chart_html": render_figure_html(
+                    figure, div_id=RUN_DIFFERENTIAL_CHART_DIV_ID
+                ),
+                "rolling_average_label": rolling_average_trace_name(window),
+                "summary_cards": build_run_differential_summary_cards(analysis),
+                "pythagorean_note": format_pythagorean_note(analysis),
+                "data_through": format_long_date(analysis.last_game_date),
+            }
+        )
+        return templates.TemplateResponse(
+            request=request, name="run_differential.html", context=context
         )
 
     @router.get(COMPARISON_PATH, response_class=HTMLResponse)

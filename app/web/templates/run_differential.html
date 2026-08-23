@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Run Differential
+  {%- else -%}
+    Team Run Differential
+  {%- endif -%}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Team Run Differential</h1>
+    <p class="page-intro__subtitle">
+      See whether a team is outscoring its opponents, and whether its record
+      reflects that.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    {% include "_selector_form.html" %}
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% elif state == "missing_opponent_data" %}
+      <section class="card notice">
+        <h2>This season needs a league-wide import</h2>
+        <p>
+          {{ games_missing }} of the {{ games_total }} stored games for
+          {{ selected_team.team_name }} in {{ selected_season }} have no
+          opponent line, so runs allowed is unknown for them.
+        </p>
+        <p>
+          Runs allowed is not a stored column and not a separate MLB request. It
+          is the opponent's own runs scored in the same game, read from the
+          opponent's record — which a single-team import never fetches. Import
+          the league season to pair every game:
+        </p>
+        <pre class="command"><code>{{ league_import_command }}</code></pre>
+        <p>
+          The hits, batting strikeouts, runs, and baserunners charts read only
+          this team's own rows, so they are unaffected and still work for this
+          team-season.
+        </p>
+      </section>
+    {% else %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} — Run Differential per Game</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure">{{ chart_html | safe }}</div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            Each bar is one completed game's margin: the runs
+            {{ analysis.team_name }} scored minus the runs they allowed. Bars
+            above the zero line are wins, bars below it are losses. A completed
+            MLB game cannot end tied, so every game is one or the other. The
+            {{ rolling_average_label|lower }} covers that game and the
+            {{ analysis.rolling_window - 1 }} games before it, and early-season
+            points use every game played so far. The dashed line is the team's
+            average margin across the completed games currently stored for this
+            season.
+          </p>
+          <p>
+            Runs allowed is not fetched from MLB as its own statistic. It is the
+            opponent's runs scored in the same game, read from the opponent's
+            own stored record, which is why this page needs a league-wide
+            import while the other charts do not.
+          </p>
+          <h3>Expected record</h3>
+          <p>{{ pythagorean_note }}</p>
+          <h3>Why there is no MLB average line</h3>
+          <p>
+            The other charts draw a dotted MLB reference line. This one does not,
+            and that is not an omission: league-wide run differential is exactly
+            zero, because every run scored by one team is a run allowed by
+            another and the totals cancel. The zero line already on the chart
+            <em>is</em> the MLB average.
+          </p>
+          <h3>What run differential does not tell you</h3>
+          <p>
+            It weights a twelve-run win the same as twelve one-run wins, which
+            is why a team's margin and its record can disagree. It also says
+            nothing about how the runs were scored or prevented — hitting,
+            pitching, and defense all land in the same number.
+          </p>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <span>Data through {{ data_through }}</span>
+  {% endif %}
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
+{% endblock %}

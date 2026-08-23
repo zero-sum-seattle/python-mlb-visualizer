@@ -3,11 +3,13 @@
 Kept out of the route so the figure contract can be tested without HTTP and so
 the route stays about request handling.
 
-The hits, batting strikeout, runs, baserunners, and normalized comparison
-figures are built by separate functions that share only the rendering helpers
-below. They look alike, but a single parameterized builder would have to
-encode which labels, colours, and axis semantics belong to which statistic,
-which is harder to read than five explicit builders.
+The hits, batting strikeout, runs, baserunners, run differential, and
+normalized comparison figures are built by separate functions that share only
+the rendering helpers below. They look alike, but a single parameterized
+builder would have to encode which labels, colours, and axis semantics belong
+to which statistic, which is harder to read than six explicit builders. The run
+differential figure is the clearest case for keeping them apart: it is the only
+signed metric, so it is the only one that must not anchor its y axis at zero.
 """
 
 from datetime import date
@@ -23,6 +25,8 @@ from app.schemas.analytics import (
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamHittingComparisonAnalysis,
+    TeamRunDifferentialAnalysis,
+    TeamRunDifferentialPoint,
     TeamRunsAnalysis,
     TeamRunsLeagueComparison,
     TeamStrikeoutsAnalysis,
@@ -56,6 +60,11 @@ BASERUNNERS_CHART_DIV_ID = "team-baserunners-chart"
 RAW_BASERUNNERS_TRACE_NAME = "Game Baserunners"
 BASERUNNERS_Y_AXIS_TITLE = "Baserunners per Game"
 
+RUN_DIFFERENTIAL_CHART_DIV_ID = "team-run-differential-chart"
+WIN_MARGIN_TRACE_NAME = "Win Margin"
+LOSS_MARGIN_TRACE_NAME = "Loss Margin"
+RUN_DIFFERENTIAL_Y_AXIS_TITLE = "Run Differential"
+
 COMPARISON_CHART_DIV_ID = "team-hitting-comparison-chart"
 HITS_INDEX_TRACE_NAME = "Hits Index"
 STRIKEOUTS_INDEX_TRACE_NAME = "Batting Strikeout Index"
@@ -69,6 +78,12 @@ _TEAL = "#0f8b8d"
 _AMBER = "#b26a00"
 _RAW_LINE = "#b7c7d8"
 _RAW_MARKER = "#7c93ab"
+# Win and loss margins on the run differential chart. Teal already means "the
+# team's own trend" across every page, so wins keep it; the losses are a warm
+# red that stays distinguishable from the amber MLB reference used elsewhere.
+_WIN_BAR = "#3f9c9d"
+_LOSS_BAR = "#c2544d"
+_ZERO_LINE = "#8a99a8"
 _GRID = "#dbe2ea"
 _AXIS_LINE = "#c9d3de"
 _AXIS_INK = "#5b6b7c"
@@ -797,6 +812,166 @@ def build_team_baserunners_figure(
             "rangemode": "tozero",
             "tickformat": "d",
             "dtick": 2,
+            "automargin": True,
+        },
+    )
+    return figure
+
+
+def build_team_run_differential_figure(
+    analysis: TeamRunDifferentialAnalysis,
+) -> go.Figure:
+    """Build the run differential figure for one team-season.
+
+    Two things make this chart deliberately unlike the other four.
+
+    It uses **diverging bars** rather than a line of open markers. Run
+    differential is the only signed metric in the application, and a bar
+    growing up or down from a zero baseline shows the sign at a glance in a way
+    a line through a cloud of markers does not. The bars are split into two
+    traces, wins and losses, so the legend explains the colours and a reader
+    can isolate either one.
+
+    It also has **no MLB reference line**, which is not an omission. League-wide
+    run differential is exactly zero by construction: every run scored by one
+    team is a run allowed by another, so the MLB total cancels. The zero line
+    the chart already draws *is* the league average, and a second amber line on
+    top of it would say the same thing twice.
+    """
+    game_numbers = [point.season_game_number for point in analysis.points]
+    game_dates = [point.game_date for point in analysis.points]
+    rolling = [point.rolling_average for point in analysis.points]
+    rolling_name = rolling_average_trace_name(analysis.rolling_window)
+
+    hover_template = (
+        "<b>%{customdata[0]}</b><br>"
+        "%{customdata[1]}<br>"
+        "%{customdata[2]} %{customdata[3]}-%{customdata[4]}<br>"
+        "Run Differential: %{customdata[5]}<br>"
+        f"{analysis.rolling_window}-Game Avg: "
+        "%{customdata[6]:.2f}<extra></extra>"
+    )
+
+    def hover_row(
+        point: TeamRunDifferentialPoint,
+    ) -> tuple[str, str, str, int, int, str, float]:
+        # Scores read high-low the way a box score does, so a 7-2 win and a
+        # 2-7 loss are told apart by the W/L flag rather than by field order.
+        winner_runs = max(point.runs_scored, point.runs_allowed)
+        loser_runs = min(point.runs_scored, point.runs_allowed)
+        return (
+            format_long_date(point.game_date),
+            format_matchup(point.opponent_name, point.home_away),
+            "W" if point.is_win else "L",
+            winner_runs,
+            loser_runs,
+            # Explicit sign: "+3" and "-3" are opposite outcomes and the plus
+            # is what stops a reader scanning the column from missing it.
+            f"{point.run_differential:+d}",
+            point.rolling_average,
+        )
+
+    figure = go.Figure()
+    for trace_name, colour, wanted in (
+        (WIN_MARGIN_TRACE_NAME, _WIN_BAR, True),
+        (LOSS_MARGIN_TRACE_NAME, _LOSS_BAR, False),
+    ):
+        selected = [point for point in analysis.points if point.is_win is wanted]
+        figure.add_trace(
+            go.Bar(
+                x=[point.season_game_number for point in selected],
+                y=[point.run_differential for point in selected],
+                customdata=[hover_row(point) for point in selected],
+                name=trace_name,
+                marker={"color": colour, "line": {"width": 0}},
+                hovertemplate=hover_template,
+            )
+        )
+
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=rolling,
+            customdata=[hover_row(point) for point in analysis.points],
+            name=rolling_name,
+            mode="lines",
+            # Straight segments between calculated points. A spline would
+            # overshoot between games and imply averages nobody calculated.
+            line={"color": _NAVY, "width": 3.5, "shape": "linear"},
+            hovertemplate=hover_template,
+        )
+    )
+
+    season_average = analysis.summary.season_average
+    figure.add_trace(
+        go.Scatter(
+            x=[game_numbers[0], game_numbers[-1]],
+            y=[season_average, season_average],
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+            mode="lines",
+            line={"color": _AMBER, "width": 2, "dash": "dash"},
+            hoverinfo="skip",
+        )
+    )
+    _label_reference_line(
+        figure,
+        x=game_numbers[-1],
+        y=season_average,
+        name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+    )
+
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
+    figure.update_layout(
+        template="plotly_white",
+        margin=_MARGIN,
+        height=470,
+        hovermode="closest",
+        # The two bar traces are one series split by outcome, not two series to
+        # be stacked or placed side by side: every game has exactly one bar.
+        barmode="overlay",
+        bargap=0.15,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
+        },
+        xaxis={
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            "showgrid": False,
+            "showline": False,
+            "zeroline": False,
+            "rangemode": "tozero",
+            "automargin": True,
+        },
+        yaxis={
+            "title": {
+                "text": RUN_DIFFERENTIAL_Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
+            "gridcolor": _GRID,
+            "griddash": "dot",
+            # The one chart in the application that draws its zero line, and
+            # draws it darker than the grid. Zero is the win/loss boundary
+            # here, not an arbitrary axis end.
+            "zeroline": True,
+            "zerolinecolor": _ZERO_LINE,
+            "zerolinewidth": 1.5,
+            # Emphatically not "tozero": the axis has to hold negative values,
+            # and anchoring it at zero would clip every loss off the chart.
+            "rangemode": "normal",
+            "tickformat": "d",
             "automargin": True,
         },
     )

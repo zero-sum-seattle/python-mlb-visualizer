@@ -17,6 +17,7 @@ Normal browser requests do **not** call the MLB Stats API.
 - Team batting Strikeouts/Game trends
 - Team Runs/Game trends
 - Team Baserunners/Game trends (hits + walks + hit-by-pitch)
+- Team run differential and Pythagorean expected record, from a league-wide import
 - MLB-wide per-game comparisons when league coverage is trustworthy
 - Normalized Hits vs batting Strikeouts comparison with MLB average = 100
 - Team, season, and rolling-window selectors with shareable URLs
@@ -137,6 +138,7 @@ Current routes:
 | `/strikeouts` | Team batting Strikeouts/Game |
 | `/runs` | Team Runs/Game |
 | `/baserunners` | Team Baserunners/Game |
+| `/run-differential` | Team run differential and Pythagorean record |
 | `/comparison` | Normalized Hits vs batting Strikeouts |
 | `/health` | JSON health check |
 
@@ -221,6 +223,36 @@ team's hitters, not pitching strikeouts.
 
 Batting K/Game is a per-game count, not K%. Plate appearances are not currently
 persisted, so the application does not estimate K%.
+
+### Run differential and runs allowed
+
+Runs allowed is **not** a stored column and not a separate MLB request. Each
+team-game row records the opponent's id alongside the team's own runs, so runs
+allowed for a game is the opponent's own runs scored on their row for the same
+`game_pk`, found by a self-join.
+
+That makes `/run-differential` the one page needing a league-wide import. The
+other pages read a single team's own rows, so a single-team import suits them;
+this one has no opponent rows to pair with and refuses rather than treating an
+unknown runs-allowed total as zero.
+
+Win/loss is derived the same way. A completed MLB game cannot end tied, so the
+team that outscored its opponent won, which gives an actual record with no W/L
+column stored anywhere.
+
+The page also shows the **Pythagorean expected record**:
+
+```text
+expected_win_pct = RS^1.83 / (RS^1.83 + RA^1.83)
+```
+
+using the exponent Baseball Reference publishes against, so the figure can be
+checked against a public source. The gap between expected and actual describes
+games already played; it is not a forecast.
+
+There is no MLB average line on this page, which is not an omission:
+league-wide run differential is exactly zero, because every run scored by one
+team is a run allowed by another. The chart's zero line *is* the MLB average.
 
 ### Normalized comparison
 
@@ -320,6 +352,7 @@ including:
 - [Team batting strikeouts visualization](docs/team-strikeouts-visualization.md)
 - [Team runs visualization](docs/team-runs-visualization.md)
 - [Team baserunners visualization](docs/team-baserunners-visualization.md)
+- [Team run differential visualization](docs/team-run-differential-visualization.md)
 - [Team vs MLB comparison](docs/team-vs-mlb-comparison.md)
 - [Normalized hitting trends comparison](docs/team-hitting-trends-comparison.md)
 - [League-season ingestion](docs/league-season-ingestion.md)
