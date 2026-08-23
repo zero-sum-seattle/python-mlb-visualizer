@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.database.engine import build_engine
 from tests.conftest import run_alembic_downgrade_base, run_alembic_upgrade
 
-REVISION_HEAD = "2efdbec9b07e"
+REVISION_HEAD = "27a202039134"
 
 
 def database_url_for(path: Path) -> str:

@@ -19,12 +19,14 @@ import plotly.graph_objects as go
 from plotly.io import to_html
 from plotly.offline import get_plotlyjs
 
+from app.analytics.team_pitching import build_pitch_count_points
 from app.schemas.analytics import (
     TeamBaserunnersAnalysis,
     TeamBaserunnersLeagueComparison,
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamHittingComparisonAnalysis,
+    TeamPitchingAnalysis,
     TeamRunDifferentialAnalysis,
     TeamRunDifferentialPoint,
     TeamRunsAnalysis,
@@ -59,6 +61,10 @@ RUNS_Y_AXIS_TITLE = "Runs Scored per Game"
 BASERUNNERS_CHART_DIV_ID = "team-baserunners-chart"
 RAW_BASERUNNERS_TRACE_NAME = "Game Baserunners"
 BASERUNNERS_Y_AXIS_TITLE = "Baserunners per Game"
+
+PITCHING_CHART_DIV_ID = "team-pitching-chart"
+RAW_PITCHES_TRACE_NAME = "Game Pitches"
+PITCHING_Y_AXIS_TITLE = "Pitches per Game"
 
 RUN_DIFFERENTIAL_CHART_DIV_ID = "team-run-differential-chart"
 WIN_MARGIN_TRACE_NAME = "Win Margin"
@@ -812,6 +818,147 @@ def build_team_baserunners_figure(
             "rangemode": "tozero",
             "tickformat": "d",
             "dtick": 2,
+            "automargin": True,
+        },
+    )
+    return figure
+
+
+def build_team_pitching_figure(
+    analysis: TeamPitchingAnalysis,
+) -> go.Figure:
+    """Build the pitches-per-game figure for one team-season.
+
+    Pitches thrown is a **count**, not a rate, so this chart follows the same
+    shape as the hits and runs pages: open markers for each game, a rolling
+    trailing mean, and a dashed season average. The rate statistics this page
+    also reports — ERA, WHIP, K/9, BB/9 — are aggregated quite differently and
+    live in the summary cards rather than on this axis.
+
+    There is no MLB reference line. A league-wide pitches-per-game average
+    would need every club's pitching lines imported, which is a much larger
+    import than the batting-only one most seasons currently have, so the page
+    does not promise a comparison it usually could not honour.
+    """
+    game_numbers = [point.season_game_number for point in analysis.points]
+    game_dates = [point.game_date for point in analysis.points]
+    pitches, rolling = build_pitch_count_points(analysis)
+    hover_data = [
+        (
+            format_long_date(point.game_date),
+            format_matchup(point.opponent_name, point.home_away),
+            point.number_of_pitches,
+            point.innings_pitched_display,
+            point.strikes,
+            rolling_value,
+        )
+        for point, rolling_value in zip(analysis.points, rolling, strict=True)
+    ]
+    rolling_name = rolling_average_trace_name(analysis.rolling_window)
+    hover_template = (
+        "<b>%{customdata[0]}</b><br>"
+        "%{customdata[1]}<br>"
+        "%{customdata[2]} pitches over %{customdata[3]} IP<br>"
+        "%{customdata[4]} strikes<br>"
+        f"{analysis.rolling_window}-Game Avg: "
+        "%{customdata[5]:.1f}<extra></extra>"
+    )
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=list(pitches),
+            customdata=hover_data,
+            name=RAW_PITCHES_TRACE_NAME,
+            mode="lines+markers",
+            line={"color": _RAW_LINE, "width": 1.2},
+            # Open circles: the game markers sit on top of each other across a
+            # 162-game season, and an outline stays readable where filled dots
+            # merge into a blob.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
+            hovertemplate=hover_template,
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=list(rolling),
+            customdata=hover_data,
+            name=rolling_name,
+            mode="lines",
+            # Straight segments between calculated points. A spline would
+            # overshoot between games and imply averages nobody calculated.
+            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
+            hovertemplate=hover_template,
+        )
+    )
+    season_average = analysis.summary.season.pitches_per_game
+    figure.add_trace(
+        go.Scatter(
+            x=[game_numbers[0], game_numbers[-1]],
+            y=[season_average, season_average],
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+            mode="lines",
+            line={"color": _NAVY, "width": 2, "dash": "dash"},
+            hoverinfo="skip",
+        )
+    )
+    _label_reference_line(
+        figure,
+        x=game_numbers[-1],
+        y=season_average,
+        name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+    )
+
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
+    figure.update_layout(
+        template="plotly_white",
+        margin=_MARGIN,
+        height=470,
+        hovermode="closest",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
+        },
+        xaxis={
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
+            "zeroline": False,
+            "rangemode": "tozero",
+            "automargin": True,
+        },
+        yaxis={
+            "title": {
+                "text": PITCHING_Y_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
+            "gridcolor": _GRID,
+            "griddash": "dot",
+            "zeroline": False,
+            # A team throws roughly 100 pitches at minimum, so anchoring at
+            # zero would waste the bottom third of the plot on empty space.
+            "rangemode": "normal",
+            "tickformat": "d",
             "automargin": True,
         },
     )

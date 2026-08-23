@@ -19,8 +19,40 @@ class TeamGamePersistenceResult(BaseModel):
     unchanged: int = Field(ge=0)
 
 
+class TeamSeasonLineCounts(BaseModel):
+    """How many lines of one stat group were fetched and what became of them."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    fetched: int = Field(ge=0)
+    inserted: int = Field(ge=0)
+    updated: int = Field(ge=0)
+    unchanged: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _fetched_matches_counts(self) -> TeamSeasonLineCounts:
+        total = self.inserted + self.updated + self.unchanged
+        if self.fetched != total:
+            raise ValueError(
+                f"fetched ({self.fetched}) must equal inserted + updated + "
+                f"unchanged ({total})"
+            )
+        return self
+
+
 class TeamSeasonIngestionResult(BaseModel):
-    """Outcome of ingesting one team-season of batting lines."""
+    """Outcome of ingesting one team-season.
+
+    The top-level counts describe **batting** lines, which is what they have
+    always meant and what every existing caller reads. Pitching lines are a
+    separate stat group in a separate MLB request landing in a separate table,
+    so their counts are reported separately rather than summed into the batting
+    ones — a season with 162 batting and 162 pitching rows has not fetched 324
+    games.
+
+    ``pitching`` is None for an ingestion that did not collect pitching, which
+    is what a caller that opted out looks like.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -31,6 +63,7 @@ class TeamSeasonIngestionResult(BaseModel):
     inserted: int = Field(ge=0)
     updated: int = Field(ge=0)
     unchanged: int = Field(ge=0)
+    pitching: TeamSeasonLineCounts | None = None
 
     @model_validator(mode="after")
     def _fetched_matches_counts(self) -> TeamSeasonIngestionResult:

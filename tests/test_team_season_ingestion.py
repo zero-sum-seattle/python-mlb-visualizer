@@ -76,6 +76,7 @@ def test_changed_source_data_updates_without_duplicate(
             session=migrated_session,
             team_id=CUBS_ID,
             season=SEASON,
+            include_pitching=False,
             client=client,
         )
     assert result.updated == 1
@@ -127,6 +128,7 @@ def test_normalization_error_leaves_database_unchanged(
             session=migrated_session,
             team_id=CUBS_ID,
             season=SEASON,
+            include_pitching=False,
         )
     count = migrated_session.scalar(
         select(func.count()).select_from(TeamGameBattingLineRecord)
@@ -150,6 +152,7 @@ def test_database_error_rolls_back_writes(migrated_session: Session) -> None:
             session=migrated_session,
             team_id=CUBS_ID,
             season=SEASON,
+            include_pitching=False,
         )
     count = migrated_session.scalar(
         select(func.count()).select_from(TeamGameBattingLineRecord)
@@ -183,6 +186,7 @@ def test_no_partial_team_season_after_failed_transaction(
             session=migrated_session,
             team_id=CUBS_ID,
             season=SEASON,
+            include_pitching=False,
         )
     count = migrated_session.scalar(
         select(func.count()).select_from(TeamGameBattingLineRecord)
@@ -220,6 +224,7 @@ def test_milestone_one_service_runs_before_transaction(
             session=migrated_session,
             team_id=CUBS_ID,
             season=SEASON,
+            include_pitching=False,
         )
 
 
@@ -247,6 +252,7 @@ def test_team_game_log_error_is_not_wrapped(migrated_session: Session) -> None:
             session=migrated_session,
             team_id=CUBS_ID,
             season=SEASON,
+            include_pitching=False,
         )
 
 
@@ -298,8 +304,31 @@ def test_import_backfills_legacy_rows_and_is_then_idempotent(
     assert [line.strikeouts for line in stored] == [5, 8, 9, 9, 10, 6]
 
 
-def test_import_makes_exactly_three_mlb_requests(migrated_session: Session) -> None:
-    """Strikeouts did not add a fourth request to the team-season strategy."""
+def test_a_batting_only_import_makes_exactly_three_mlb_requests(
+    migrated_session: Session,
+) -> None:
+    """Strikeouts and the baserunner components did not add a request."""
+    client = make_client()
+    ingest_team_season(
+        session=migrated_session,
+        team_id=CUBS_ID,
+        season=SEASON,
+        client=client,
+        include_pitching=False,
+    )
+    assert sorted(client.calls) == ["get_schedule", "get_team", "get_team_stats"]
+    assert client.stat_group_calls == [("hitting",)]
+
+
+def test_importing_pitching_adds_one_request_and_shares_the_rest(
+    migrated_session: Session,
+) -> None:
+    """Four requests, not six.
+
+    Pitching genuinely needs its own game log, but the team lookup and the
+    season schedule are shared with the hitting log rather than fetched twice.
+    Over a 30-club league import that difference is 60 requests.
+    """
     client = make_client()
     ingest_team_season(
         session=migrated_session,
@@ -307,4 +336,5 @@ def test_import_makes_exactly_three_mlb_requests(migrated_session: Session) -> N
         season=SEASON,
         client=client,
     )
+    assert client.stat_group_calls == [("hitting",), ("pitching",)]
     assert sorted(client.calls) == ["get_schedule", "get_team", "get_team_stats"]

@@ -1,11 +1,16 @@
 """Normalized schemas for team game-level results."""
 
+from __future__ import annotations
+
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 HomeAway = Literal["home", "away"]
+
+OUTS_PER_INNING = 3
+OUTS_PER_NINE_INNINGS = 27
 
 
 class TeamGameBattingLine(BaseModel):
@@ -146,3 +151,142 @@ class TeamSeasonRunResults(BaseModel):
     unpaired_game_pks: tuple[int, ...] = Field(
         description="Games of this team-season with no stored opponent row."
     )
+
+
+class TeamGamePitchingLine(BaseModel):
+    """One team's pitching result in one completed MLB game.
+
+    Innings are stored as **outs**, an integer, and never as innings pitched.
+    MLB returns ``inningsPitched`` as a string in baseball notation, where
+    ``'10.2'`` means ten and two-thirds innings rather than 10.2 of them.
+    Parsing that as a decimal silently corrupts every rate derived from it, so
+    this model does not carry the field at all. The same split provides
+    ``outs`` as an exact integer — 32 for that game — and every rate here is
+    derived from it.
+
+    Only raw components are stored. ERA, WHIP, K/9, and BB/9 are calculated
+    from these fields on demand rather than persisted, so a stored rate can
+    never drift from the components it came from.
+
+    Game context (opponent, status, game number, scheduled innings) is
+    duplicated from the batting line rather than joined. It comes from the same
+    schedule request at no extra cost, and it keeps a pitching row readable on
+    its own instead of only in the presence of its batting counterpart.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    game_pk: int = Field(gt=0, description="MLB game identifier.")
+    game_date: date = Field(description="Official date the game counts against.")
+    season: int = Field(gt=0, description="Season the game belongs to.")
+    team_id: int = Field(gt=0, description="MLB team id of the selected team.")
+    team_name: str = Field(min_length=1, description="Display name of the team.")
+    opponent_id: int = Field(gt=0, description="MLB team id of the opponent.")
+    opponent_name: str = Field(
+        min_length=1, description="Display name of the opponent."
+    )
+    home_away: HomeAway = Field(
+        description="Whether the selected team was home or away."
+    )
+    outs: int = Field(
+        ge=0,
+        description="Outs recorded by this team's pitchers. Three per inning, so "
+        "a nine-inning start is 27. Never innings pitched: see the class "
+        "docstring for why that field is not carried.",
+    )
+    hits_allowed: int = Field(ge=0, description="Hits allowed by this team.")
+    runs_allowed: int = Field(ge=0, description="Runs allowed, earned or not.")
+    earned_runs: int = Field(
+        ge=0,
+        description="Earned runs allowed. A subset of runs_allowed, so it can "
+        "never exceed it.",
+    )
+    base_on_balls: int = Field(ge=0, description="Walks issued by this team.")
+    strikeouts: int = Field(
+        ge=0,
+        description="Strikeouts recorded by this team's pitchers. Pitching "
+        "strikeouts, which are a different statistic from the batting "
+        "strikeouts stored on the batting line.",
+    )
+    home_runs_allowed: int = Field(
+        ge=0,
+        description="Home runs allowed. A subset of hits_allowed, so it can "
+        "never exceed it.",
+    )
+    batters_faced: int = Field(ge=0, description="Batters faced by this team.")
+    number_of_pitches: int = Field(
+        ge=0, description="Total pitches thrown by this team's pitchers."
+    )
+    strikes: int = Field(
+        ge=0,
+        description="Pitches that were strikes. A subset of number_of_pitches, "
+        "so it can never exceed it. Balls are not stored: MLB leaves that field "
+        "empty on the team game log, and it is number_of_pitches - strikes.",
+    )
+    status: str = Field(min_length=1, description="Detailed MLB game status.")
+    game_number: int = Field(
+        ge=1,
+        description="Game number on the date, 2 for the second game of a doubleheader.",
+    )
+    doubleheader: bool = Field(
+        description="Whether the game was part of a doubleheader."
+    )
+    scheduled_innings: int = Field(
+        ge=1,
+        description="Innings the game was scheduled for, which is not always nine.",
+    )
+
+    @model_validator(mode="after")
+    def _components_are_subsets_of_their_totals(self) -> TeamGamePitchingLine:
+        """Reject a line whose parts contradict each other.
+
+        Both rules are definitional rather than empirical: an earned run is a
+        run, and a home run is a hit. Checked across 648 real 2025 team-games
+        with no violations before being encoded here.
+        """
+        if self.earned_runs > self.runs_allowed:
+            raise ValueError(
+                f"earned_runs ({self.earned_runs}) cannot exceed runs_allowed "
+                f"({self.runs_allowed}); an earned run is a run"
+            )
+        if self.home_runs_allowed > self.hits_allowed:
+            raise ValueError(
+                f"home_runs_allowed ({self.home_runs_allowed}) cannot exceed "
+                f"hits_allowed ({self.hits_allowed}); a home run is a hit"
+            )
+        if self.batters_faced < self.outs:
+            raise ValueError(
+                f"batters_faced ({self.batters_faced}) cannot be fewer than outs "
+                f"({self.outs}); every out is recorded against a batter faced"
+            )
+        if self.strikes > self.number_of_pitches:
+            raise ValueError(
+                f"strikes ({self.strikes}) cannot exceed number_of_pitches "
+                f"({self.number_of_pitches}); a strike is a pitch"
+            )
+        return self
+
+    @property
+    def balls(self) -> int:
+        """Pitches that were not strikes.
+
+        Derived rather than stored: MLB leaves ``balls`` empty on the team game
+        log even though it populates ``strikes``, so this is the only figure
+        available and storing a redundant column would invite the two to drift.
+        """
+        return self.number_of_pitches - self.strikes
+
+    @property
+    def innings_pitched(self) -> float:
+        """Outs expressed as innings, for calculation only.
+
+        A true fraction, not baseball notation: 32 outs is ``10.666...``, which
+        is what a rate calculation needs. Use ``innings_pitched_display`` for
+        the ``10.2`` form a reader expects to see.
+        """
+        return self.outs / OUTS_PER_INNING
+
+    @property
+    def innings_pitched_display(self) -> str:
+        """Outs in the baseball notation a box score prints: ``10.2`` for 32 outs."""
+        return f"{self.outs // OUTS_PER_INNING}.{self.outs % OUTS_PER_INNING}"

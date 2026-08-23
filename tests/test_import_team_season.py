@@ -52,6 +52,9 @@ def test_clean_json_output() -> None:
         "inserted": 162,
         "updated": 0,
         "unchanged": 0,
+        # Null rather than zero: this sample did not collect pitching at all,
+        # which is a different thing from having collected nothing.
+        "pitching": None,
     }
 
 

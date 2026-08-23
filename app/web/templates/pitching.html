@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Pitching Trends
+  {%- else -%}
+    Team Pitching Trends
+  {%- endif -%}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Team Pitching Trends</h1>
+    <p class="page-intro__subtitle">
+      See how many pitches a team's staff is throwing per game as the season
+      progresses, alongside the rate statistics those pitches produced.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    {% include "_selector_form.html" %}
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% elif state == "missing_pitching_data" %}
+      <section class="card notice">
+        <h2>This team-season has no pitching data</h2>
+        <p>
+          {{ selected_team.team_name }}'s {{ selected_season }} games are stored,
+          but they were imported before pitching was collected. Pitching is a
+          separate MLB stat group in its own request, so it is not something the
+          existing rows can be read for &mdash; the data was never fetched.
+        </p>
+        <p>
+          Re-import the team-season to fetch it. The batting rows are left in
+          place and updated rather than replaced:
+        </p>
+        <pre class="command"><code>{{ reimport_command }}</code></pre>
+        <p>
+          The hits, batting strikeouts, runs, baserunners, and run differential
+          charts read the batting rows and are unaffected.
+        </p>
+      </section>
+    {% else %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} &mdash; Pitches per Game</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure">{{ chart_html | safe }}</div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            Each point is the total number of pitches {{ analysis.team_name }}'s
+            staff threw in one completed game. The
+            {{ rolling_average_label|lower }} covers that game and the
+            {{ analysis.rolling_window - 1 }} games before it, and early-season
+            points use every game played so far. The dashed line is the team's
+            average across the completed games currently stored for this season.
+          </p>
+          <p>
+            Pitch count moves with things other than pitching quality. Extra
+            innings raise it, a game where the home team never batted in the
+            ninth lowers it, and a staff that works deep counts throws more
+            pitches than one that puts hitters away early. A higher or lower
+            value is not automatically better in either direction.
+          </p>
+          <h3>The rate statistics</h3>
+          <p>
+            ERA, WHIP, K/9, and BB/9 in the cards above are aggregated
+            differently from the chart. Pitches per game is a count, so its
+            season figure is the plain mean of the per-game values. The rates
+            are ratios, and their season figures divide one season total by
+            another &mdash; total earned runs by total innings, and so on.
+            Averaging the individual game rates instead would give a
+            two-inning game the same weight as a thirteen-inning one and
+            produce numbers matching no published source.
+          </p>
+          <h3>Innings are counted in outs</h3>
+          <p>
+            MLB reports innings pitched in baseball notation, where
+            <code>10.2</code> means ten and two-thirds innings rather than
+            10.2 of them. This application stores outs instead &mdash; 32 for
+            that game &mdash; and converts back only for display, so no rate is
+            ever calculated from a number that looks decimal but is not.
+          </p>
+          <h3>Why there is no MLB average line</h3>
+          <p>
+            A league-wide figure needs every club's pitching lines imported,
+            which is a considerably larger import than the batting-only one
+            most stored seasons currently have. Rather than show a comparison
+            that would usually be missing, this page shows none.
+          </p>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <span>Data through {{ data_through }}</span>
+  {% endif %}
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
+{% endblock %}
