@@ -18,6 +18,7 @@ Normal browser requests do **not** call the MLB Stats API.
 - Team Runs/Game trends
 - Team Baserunners/Game trends (hits + walks + hit-by-pitch)
 - Team run differential and Pythagorean expected record, from a league-wide import
+- Team pitching: pitches per game, with ERA, WHIP, K/9 and BB/9
 - MLB-wide per-game comparisons when league coverage is trustworthy
 - Normalized Hits vs batting Strikeouts comparison with MLB average = 100
 - Team, season, and rolling-window selectors with shareable URLs
@@ -139,6 +140,7 @@ Current routes:
 | `/runs` | Team Runs/Game |
 | `/baserunners` | Team Baserunners/Game |
 | `/run-differential` | Team run differential and Pythagorean record |
+| `/pitching` | Team pitches per game, with ERA and WHIP |
 | `/comparison` | Normalized Hits vs batting Strikeouts |
 | `/health` | JSON health check |
 
@@ -254,6 +256,51 @@ There is no MLB average line on this page, which is not an omission:
 league-wide run differential is exactly zero, because every run scored by one
 team is a run allowed by another. The chart's zero line *is* the MLB average.
 
+### Pitching
+
+Pitching is a **separate MLB stat group in its own request**, so it is the first
+feature here that increases import cost: a team-season is four requests rather
+than three (the team lookup and the season schedule are shared between the two
+game logs). Pitching lines live in their own table, `team_game_pitching_lines`.
+
+A team-season imported before pitching was collected has no pitching rows at
+all, and `/pitching` returns 409 asking for a re-import. Every pitching column
+is `NOT NULL`, so unlike batting strikeouts and the baserunner components there
+is no partially-known state.
+
+#### Innings are stored as outs
+
+MLB returns `inningsPitched` as a **string in baseball notation**, where
+`'10.2'` means ten and two-thirds innings rather than 10.2 of them. Reading that
+as a decimal silently corrupts every derived rate. The same split carries `outs`
+as an exact integer, so that is the stored column:
+
+```text
+outs 32  ->  10.2 IP  ->  ER 9 * 27 / 32 = 7.59   (MLB's own era: '7.59')
+```
+
+Only raw components are persisted. ERA, WHIP, K/9 and BB/9 are derived on read,
+so a stored rate cannot drift from the components it came from.
+
+#### Counts and rates aggregate differently
+
+Pitches per game is a **count**, so its season figure is the plain mean of the
+per-game values, like every other per-game page here.
+
+ERA, WHIP, K/9 and BB/9 are **rates**, and a rate over several games is the
+ratio of the summed totals — not the mean of the per-game ratios. For the 2025
+Mariners:
+
+```text
+season ERA (correct)          629 ER * 27 / 4388 outs  =  3.870
+mean of the 162 game ERAs                              =  3.965
+```
+
+That 0.094 gap would match no published figure. The same rule applies to the
+rolling window, which accumulates earned runs and outs rather than smoothing
+game ERAs, and to the league context, whose rates are outs-weighted rather than
+game-weighted.
+
 ### Normalized comparison
 
 The comparison page puts two different statistics on a common scale:
@@ -353,6 +400,7 @@ including:
 - [Team runs visualization](docs/team-runs-visualization.md)
 - [Team baserunners visualization](docs/team-baserunners-visualization.md)
 - [Team run differential visualization](docs/team-run-differential-visualization.md)
+- [Team pitching visualization](docs/team-pitching-visualization.md)
 - [Team vs MLB comparison](docs/team-vs-mlb-comparison.md)
 - [Normalized hitting trends comparison](docs/team-hitting-trends-comparison.md)
 - [League-season ingestion](docs/league-season-ingestion.md)

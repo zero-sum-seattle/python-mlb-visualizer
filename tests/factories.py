@@ -10,7 +10,11 @@ from app.schemas.analytics import (
     LeagueRunsContext,
     LeagueStrikeoutsContext,
 )
-from app.schemas.games import TeamGameBattingLine, TeamGameRunResult
+from app.schemas.games import (
+    TeamGameBattingLine,
+    TeamGamePitchingLine,
+    TeamGameRunResult,
+)
 
 MARINERS_ID = 136
 MARINERS_NAME = "Seattle Mariners"
@@ -264,3 +268,74 @@ def make_league_runs_context(
         total_runs=total_runs,
         runs_per_game=total_runs / team_game_records,
     )
+
+
+def make_pitching_line(**overrides: Any) -> TeamGamePitchingLine:
+    """Build one pitching line, overriding only the fields a test cares about."""
+    base: dict[str, Any] = {
+        "game_pk": 776000,
+        "game_date": OPENING_DAY,
+        "season": 2025,
+        "team_id": MARINERS_ID,
+        "team_name": MARINERS_NAME,
+        "opponent_id": TWINS_ID,
+        "opponent_name": TWINS_NAME,
+        "home_away": "home",
+        # A regulation nine innings, so a test that cares only about earned
+        # runs gets the arithmetic it expects.
+        "outs": 27,
+        "hits_allowed": 8,
+        "runs_allowed": 3,
+        "earned_runs": 3,
+        "base_on_balls": 2,
+        "strikeouts": 9,
+        "home_runs_allowed": 1,
+        "batters_faced": 38,
+        "number_of_pitches": 150,
+        "strikes": 98,
+        "status": "Final",
+        "game_number": 1,
+        "doubleheader": False,
+        "scheduled_innings": 9,
+    }
+    base.update(overrides)
+    return TeamGamePitchingLine(**base)
+
+
+def make_pitching_season(
+    earned_runs: Sequence[int],
+    *,
+    outs: Sequence[int] | None = None,
+    team_id: int = MARINERS_ID,
+    team_name: str = MARINERS_NAME,
+    season: int = 2025,
+) -> list[TeamGamePitchingLine]:
+    """Build one pitching game per earned-run total, on consecutive days.
+
+    ``outs`` defaults to a regulation 27 per game. Pass it to build a season
+    with short or extra-inning games, which is what the rate-aggregation tests
+    need: equal outs everywhere is the one case where the correct aggregation
+    and a naive mean of game rates happen to agree.
+    """
+    if outs is not None and len(outs) != len(earned_runs):
+        raise ValueError(
+            f"outs has {len(outs)} values but earned_runs has {len(earned_runs)}"
+        )
+    opening_day = date(season, OPENING_DAY.month, OPENING_DAY.day)
+    return [
+        make_pitching_line(
+            game_pk=season * 1000 + index,
+            game_date=opening_day + timedelta(days=index),
+            season=season,
+            team_id=team_id,
+            team_name=team_name,
+            home_away="home" if index % 2 == 0 else "away",
+            outs=27 if outs is None else outs[index],
+            earned_runs=value,
+            # Runs allowed must cover earned runs, and batters faced must
+            # cover outs, or the domain model rejects the line.
+            runs_allowed=value,
+            batters_faced=(27 if outs is None else outs[index]) + 11,
+        )
+        for index, value in enumerate(earned_runs)
+    ]
