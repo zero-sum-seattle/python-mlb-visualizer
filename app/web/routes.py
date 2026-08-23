@@ -18,6 +18,10 @@ from app.analytics.league_baserunners import (
     compare_team_baserunners_to_league,
     supports_league_wide_baserunners_average,
 )
+from app.analytics.league_hits_allowed import (
+    compare_team_hits_allowed_to_league,
+    supports_league_wide_hits_allowed_average,
+)
 from app.analytics.league_hitting import (
     build_league_hits_context,
     compare_team_hits_to_league,
@@ -43,6 +47,7 @@ from app.analytics.team_baserunners import (
     MissingBaserunnerDataError,
     build_team_baserunners_analysis,
 )
+from app.analytics.team_hits_allowed import build_team_hits_allowed_analysis
 from app.analytics.team_hitting import DEFAULT_ROLLING_WINDOW, build_team_hits_analysis
 from app.analytics.team_hitting_comparison import (
     InvalidComparisonBaselineError,
@@ -73,6 +78,8 @@ from app.database.repositories import (
 from app.schemas.analytics import (
     TeamBaserunnersAnalysis,
     TeamBaserunnersLeagueComparison,
+    TeamHitsAllowedAnalysis,
+    TeamHitsAllowedLeagueComparison,
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamPitchingAnalysis,
@@ -85,11 +92,13 @@ from app.schemas.analytics import (
 from app.web.charts import (
     BASERUNNERS_CHART_DIV_ID,
     COMPARISON_CHART_DIV_ID,
+    HITS_ALLOWED_CHART_DIV_ID,
     PITCHING_CHART_DIV_ID,
     RUN_DIFFERENTIAL_CHART_DIV_ID,
     RUNS_CHART_DIV_ID,
     STRIKEOUTS_CHART_DIV_ID,
     build_team_baserunners_figure,
+    build_team_hits_allowed_figure,
     build_team_hits_figure,
     build_team_hitting_comparison_figure,
     build_team_pitching_figure,
@@ -103,15 +112,18 @@ from app.web.charts import (
 from app.web.dependencies import get_db_session
 from app.web.formatting import (
     build_baserunners_summary_cards,
+    build_hits_allowed_summary_cards,
     build_hitting_comparison_summary_cards,
     build_pitching_summary_cards,
     build_run_differential_summary_cards,
     build_runs_summary_cards,
     build_strikeout_summary_cards,
     build_summary_cards,
+    format_hits_allowed_direction_sentence,
     format_league_baserunners_backfill_note,
     format_league_baserunners_note,
     format_league_comparison_note,
+    format_league_hits_allowed_note,
     format_league_pitching_note,
     format_league_runs_note,
     format_league_strikeouts_backfill_note,
@@ -124,6 +136,7 @@ from app.web.formatting import (
 from app.web.navigation import (
     BASERUNNERS_PATH,
     COMPARISON_PATH,
+    HITS_ALLOWED_PATH,
     HITS_PATH,
     PITCHING_PATH,
     RUN_DIFFERENTIAL_PATH,
@@ -835,6 +848,141 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
             request=request, name="run_differential.html", context=context
         )
 
+    @router.get(HITS_ALLOWED_PATH, response_class=HTMLResponse)
+    def hits_allowed(
+        request: Request,
+        session: Annotated[Session, Depends(get_db_session)],
+        team_id: Annotated[
+            int | None,
+            Query(gt=0, description="MLB team id that has been imported locally."),
+        ] = None,
+        season: Annotated[
+            int | None,
+            Query(gt=0, description="Season that has been imported for the team."),
+        ] = None,
+        window: Annotated[
+            RollingWindowParam,
+            Query(description="Games in the trailing rolling average."),
+        ] = DEFAULT_ROLLING_WINDOW,
+    ) -> Response:
+        """Render hits-allowed trends for one persisted team-season."""
+        try:
+            available = list_available_team_seasons(session)
+        except DatabaseSchemaMissingError as exc:
+            return _render_schema_error(templates, request, settings, exc)
+
+        teams = build_team_options(available)
+        context: dict[str, Any] = {
+            "app_name": settings.app_name,
+            "teams": teams,
+            "team_seasons_catalog": build_team_seasons_catalog(teams),
+            "window_options": ROLLING_WINDOW_OPTIONS,
+            "selected_window": window,
+            "selected_team": None,
+            "selected_season": None,
+            "import_command": IMPORT_COMMAND,
+            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+            "mlb_logo_url": MLB_LOGO_URL,
+            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
+            "form_action": HITS_ALLOWED_PATH,
+            "nav_links": build_nav_links(
+                current_path=HITS_ALLOWED_PATH,
+                team_id=team_id,
+                season=season,
+                window=window,
+            ),
+        }
+
+        if not teams:
+            context["state"] = "empty"
+            return templates.TemplateResponse(
+                request=request, name="hits_allowed.html", context=context
+            )
+
+        selected_team = select_team(teams, team_id)
+        if selected_team is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No games are stored for team id {team_id}. "
+                "Pick a team that has been imported, or import that team."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="hits_allowed.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_team"] = selected_team
+        selected_season = select_season(selected_team, season)
+        if selected_season is None:
+            context["state"] = "not_found"
+            context["not_found_message"] = (
+                f"No {season} games are stored for {selected_team.team_name}. "
+                f"Stored seasons: "
+                f"{', '.join(str(value) for value in selected_team.seasons)}."
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="hits_allowed.html",
+                context=context,
+                status_code=404,
+            )
+
+        context["selected_season"] = selected_season
+        context["nav_links"] = build_nav_links(
+            current_path=HITS_ALLOWED_PATH,
+            team_id=selected_team.team_id,
+            season=selected_season,
+            window=window,
+        )
+        games = list_team_season_pitching(
+            session, team_id=selected_team.team_id, season=selected_season
+        )
+
+        if not games:
+            # Stored before pitching was collected. Hits allowed lives on the
+            # pitching row, so the same 409 the pitching page uses applies.
+            context["state"] = "missing_pitching_data"
+            context["reimport_command"] = import_command_for(
+                selected_team.team_id, selected_season
+            )
+            return templates.TemplateResponse(
+                request=request,
+                name="hits_allowed.html",
+                context=context,
+                status_code=409,
+            )
+
+        analysis = build_team_hits_allowed_analysis(games, rolling_window=window)
+        league_comparison = _load_league_hits_allowed_comparison(session, analysis)
+        figure = build_team_hits_allowed_figure(analysis, league_comparison)
+
+        context.update(
+            {
+                "state": "ok",
+                "analysis": analysis,
+                "chart_html": render_figure_html(
+                    figure, div_id=HITS_ALLOWED_CHART_DIV_ID
+                ),
+                "rolling_average_label": rolling_average_trace_name(window),
+                "summary_cards": build_hits_allowed_summary_cards(
+                    analysis, league_comparison
+                ),
+                "league_comparison": league_comparison,
+                "league_comparison_note": format_league_hits_allowed_note(
+                    league_comparison
+                ),
+                "direction_sentence": format_hits_allowed_direction_sentence(
+                    league_comparison, analysis.team_name
+                ),
+                "data_through": format_long_date(analysis.last_game_date),
+            }
+        )
+        return templates.TemplateResponse(
+            request=request, name="hits_allowed.html", context=context
+        )
+
     @router.get(PITCHING_PATH, response_class=HTMLResponse)
     def pitching(
         request: Request,
@@ -1257,6 +1405,30 @@ def _load_league_runs_comparison(
     league_games = list_league_season(session, season=analysis.season)
     league = build_league_runs_context(league_games)
     return compare_team_runs_to_league(analysis, league)
+
+
+def _load_league_hits_allowed_comparison(
+    session: Session,
+    analysis: TeamHitsAllowedAnalysis,
+) -> TeamHitsAllowedLeagueComparison | None:
+    """Read MLB hits-allowed context, or None when it is not earned.
+
+    The MLB side is built from ``team_game_batting_lines``, not from the
+    pitching table. Every hit by one team is a hit allowed by another, so
+    league-wide the two totals are identical over the same count of team-game
+    records — see ``app/analytics/league_hits_allowed.py``.
+
+    That is what makes this comparison usually available where the ERA one on
+    ``/pitching`` is not: it needs complete **batting** coverage, which most
+    stored seasons have, rather than every club's pitching lines.
+    """
+    coverage = get_league_season_ingestion(session, season=analysis.season)
+    if not supports_league_wide_hits_allowed_average(coverage):
+        return None
+
+    league_games = list_league_season(session, season=analysis.season)
+    league = build_league_hits_context(league_games)
+    return compare_team_hits_allowed_to_league(analysis, league)
 
 
 def _load_league_pitching_comparison(

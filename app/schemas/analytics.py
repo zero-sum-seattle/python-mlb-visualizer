@@ -1530,3 +1530,192 @@ class TeamPitchingLeagueComparison(BaseModel):
                     f"minus the league value ({expected})"
                 )
         return self
+
+
+class TeamHitsAllowedPoint(BaseModel):
+    """One completed game plotted on the team hits-allowed chart."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    game_pk: int = Field(gt=0, description="MLB game identifier.")
+    game_number: int = Field(
+        ge=1,
+        description="MLB game number on the date, 2 for the second game of a "
+        "doubleheader. Used for ordering, not for the x axis.",
+    )
+    season_game_number: int = Field(
+        ge=1,
+        description="Continuous 1-based position of the game within the season.",
+    )
+    game_date: date = Field(description="Official date the game counts against.")
+    opponent_name: str = Field(
+        min_length=1, description="Display name of the opponent."
+    )
+    home_away: HomeAway = Field(description="Whether the team was home or away.")
+    hits_allowed: int = Field(
+        ge=0,
+        description="Hits surrendered by this team's pitchers. Hits allowed, "
+        "never hits recorded by its own hitters.",
+    )
+    outs: int = Field(gt=0, description="Outs recorded in this game.")
+    innings_pitched_display: str = Field(
+        min_length=1,
+        description="Innings in the baseball notation a box score prints, such "
+        "as '10.2' for 32 outs. Display only; never used in a calculation.",
+    )
+    rolling_average: float = Field(
+        ge=0,
+        description="Trailing rolling hits-allowed-per-game average ending here.",
+    )
+
+
+class TeamHitsAllowedSummary(BaseModel):
+    """Headline numbers describing a team-season's hits allowed.
+
+    ``season_average`` is the single authoritative season figure; the chart's
+    reference line, the summary card, and the MLB comparison all read it from
+    here, so the page cannot show two different team averages.
+
+    ``hits_per_nine`` is the one rate on the page, and it divides summed totals
+    rather than averaging per-game rates, the way the other pitching rates do.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    games_played: int = Field(ge=1, description="Completed games analysed.")
+    total_hits_allowed: int = Field(ge=0, description="Hits allowed in total.")
+    total_outs: int = Field(gt=0, description="Outs recorded in total.")
+    season_average: float = Field(
+        ge=0, description="Hits allowed per game across the stored games."
+    )
+    hits_per_nine: float = Field(
+        ge=0, description="total_hits_allowed * 27 / total_outs."
+    )
+    recent_average: float = Field(
+        ge=0, description="Hits allowed per game over the most recent window."
+    )
+    prior_window_average: float | None = Field(
+        default=None,
+        ge=0,
+        description="Hits allowed per game over the window immediately before "
+        "the recent one, or None when two complete windows do not exist.",
+    )
+    change_vs_prior_window: float | None = Field(
+        default=None,
+        description="recent_average - prior_window_average, or None. Negative "
+        "is an improvement, since fewer hits allowed is better.",
+    )
+
+    @model_validator(mode="after")
+    def _totals_and_windows_agree(self) -> TeamHitsAllowedSummary:
+        expected_average = self.total_hits_allowed / self.games_played
+        if not isclose(
+            self.season_average, expected_average, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            raise ValueError(
+                f"season_average ({self.season_average}) must equal "
+                f"total_hits_allowed / games_played ({expected_average})"
+            )
+        expected_rate = self.total_hits_allowed * 27 / self.total_outs
+        if not isclose(self.hits_per_nine, expected_rate, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"hits_per_nine ({self.hits_per_nine}) must equal "
+                f"total_hits_allowed * 27 / total_outs ({expected_rate})"
+            )
+        has_prior = self.prior_window_average is not None
+        has_change = self.change_vs_prior_window is not None
+        if has_prior != has_change:
+            raise ValueError(
+                "prior_window_average and change_vs_prior_window must both be "
+                "present or both be None"
+            )
+        return self
+
+
+class TeamHitsAllowedAnalysis(BaseModel):
+    """A team-season's hits-allowed trend, ready to chart."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id.")
+    team_name: str = Field(min_length=1, description="Historical name for the season.")
+    season: int = Field(gt=0, description="Season analysed.")
+    rolling_window: int = Field(ge=1, description="Games in the trailing window.")
+    points: tuple[TeamHitsAllowedPoint, ...] = Field(
+        min_length=1, description="Games in chart order."
+    )
+    summary: TeamHitsAllowedSummary
+
+    @model_validator(mode="after")
+    def _summary_matches_points(self) -> TeamHitsAllowedAnalysis:
+        if self.summary.games_played != len(self.points):
+            raise ValueError(
+                "summary.games_played must equal the number of chart points"
+            )
+        charted = sum(point.hits_allowed for point in self.points)
+        if charted != self.summary.total_hits_allowed:
+            raise ValueError(
+                f"summary.total_hits_allowed ({self.summary.total_hits_allowed}) "
+                f"must equal the hits allowed across the chart points ({charted})"
+            )
+        charted_outs = sum(point.outs for point in self.points)
+        if charted_outs != self.summary.total_outs:
+            raise ValueError(
+                f"summary.total_outs ({self.summary.total_outs}) must equal the "
+                f"outs across the chart points ({charted_outs})"
+            )
+        return self
+
+    @property
+    def last_game_date(self) -> date:
+        """Date of the most recent completed game in the analysis."""
+        return self.points[-1].game_date
+
+
+class TeamHitsAllowedLeagueComparison(BaseModel):
+    """One team's hits allowed per game placed beside MLB overall.
+
+    ``league`` is a ``LeagueHitsContext``, the hitting-side context, and that is
+    not a mistake. Every hit by one team is a hit allowed by another, so
+    league-wide the two totals are identical over the same count of team-game
+    records. See ``app/analytics/league_hits_allowed.py``.
+
+    Note the direction: a **negative** difference means the team allowed fewer
+    hits per game than MLB, which is the better direction. That is the opposite
+    of ``TeamHitsLeagueComparison``, which this model otherwise mirrors.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id of the selected team.")
+    team_name: str = Field(min_length=1, description="Name for the season.")
+    season: int = Field(gt=0, description="Season compared.")
+    team_hits_allowed_per_game: float = Field(
+        ge=0,
+        description="The selected team's average across its stored games, taken "
+        "from TeamHitsAllowedSummary.season_average so the page cannot disagree "
+        "with itself.",
+    )
+    league: LeagueHitsContext = Field(
+        description="MLB-wide context, built from the batting table because the "
+        "league totals are identical either way."
+    )
+    difference_vs_mlb: float = Field(
+        description="team_hits_allowed_per_game - league.hits_per_game. Negative "
+        "means the team allowed fewer hits per game than MLB, which is better.",
+    )
+
+    @model_validator(mode="after")
+    def _comparison_is_internally_consistent(self) -> TeamHitsAllowedLeagueComparison:
+        if self.season != self.league.season:
+            raise ValueError(
+                f"season ({self.season}) must match the league context season "
+                f"({self.league.season})"
+            )
+        expected = self.team_hits_allowed_per_game - self.league.hits_per_game
+        if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"difference_vs_mlb ({self.difference_vs_mlb}) must equal "
+                f"team_hits_allowed_per_game - league.hits_per_game ({expected})"
+            )
+        return self

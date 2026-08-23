@@ -6,6 +6,8 @@ from datetime import date
 from app.schemas.analytics import (
     TeamBaserunnersAnalysis,
     TeamBaserunnersLeagueComparison,
+    TeamHitsAllowedAnalysis,
+    TeamHitsAllowedLeagueComparison,
     TeamHitsAnalysis,
     TeamHitsLeagueComparison,
     TeamHittingComparisonAnalysis,
@@ -26,6 +28,11 @@ BASERUNNERS_PER_GAME_CAPTION = "Baserunners per Game"
 RUN_DIFFERENTIAL_PER_GAME_CAPTION = "Run Differential per Game"
 EARNED_RUN_AVERAGE_CAPTION = "Earned Run Average"
 PITCHES_PER_GAME_CAPTION = "Pitches per Game"
+HITS_ALLOWED_PER_GAME_CAPTION = "Hits Allowed per Game"
+LEAGUE_HITS_ALLOWED_UNAVAILABLE_NOTE = (
+    "MLB comparison unavailable. A complete league-season import is required "
+    "before an MLB-wide hits-allowed average can be shown."
+)
 LEAGUE_PITCHING_UNAVAILABLE_NOTE = (
     "MLB comparison unavailable. A complete league-season import that includes "
     "pitching is required before an MLB-wide ERA can be shown."
@@ -741,4 +748,110 @@ def format_pitching_comparison_sentence(
         f"{team_name}'s ERA is {abs(difference):.2f} {direction} MLB overall, "
         f"{quality} earned runs per nine innings than the league across the "
         f"stored season."
+    )
+
+
+def build_hits_allowed_summary_cards(
+    analysis: TeamHitsAllowedAnalysis,
+    league_comparison: TeamHitsAllowedLeagueComparison | None = None,
+) -> list[SummaryCard]:
+    """Round the analysis for display only; the calculations keep full precision.
+
+    The same four cards the hits page shows, mirrored. The third is the team's
+    difference against MLB, which reads ``—`` rather than a number when the
+    season lacks complete league coverage — never ``0.00``, which is a real
+    value meaning the team matched MLB exactly.
+
+    The fourth carries H/9 rather than a games-played count. Hits allowed per
+    game and hits allowed per nine innings differ whenever a team pitches other
+    than regulation length, and showing both is what makes the distinction
+    visible.
+    """
+    summary = analysis.summary
+    window = analysis.rolling_window
+
+    if league_comparison is None:
+        league_card = SummaryCard(
+            label="vs MLB",
+            value=NO_LEAGUE_COMPARISON_VALUE,
+            caption=NO_LEAGUE_COMPARISON_CAPTION,
+        )
+    else:
+        league_card = SummaryCard(
+            label="vs MLB",
+            value=f"{league_comparison.difference_vs_mlb:+.2f}",
+            # Spelled out because this page's direction is the opposite of the
+            # hits page it mirrors: below MLB is the better side here.
+            caption="Hits Allowed, Negative Is Better",
+        )
+
+    return [
+        SummaryCard(
+            label=f"Recent {window}-Game Avg",
+            value=f"{summary.recent_average:.2f}",
+            caption=HITS_ALLOWED_PER_GAME_CAPTION,
+        ),
+        SummaryCard(
+            label="Season Avg",
+            value=f"{summary.season_average:.2f}",
+            caption=(
+                f"{summary.total_hits_allowed:,} Hits, "
+                f"{format_innings(summary.total_outs)} IP"
+            ),
+        ),
+        league_card,
+        SummaryCard(
+            label="H/9",
+            value=f"{summary.hits_per_nine:.2f}",
+            caption="Hits Allowed per Nine Innings",
+        ),
+    ]
+
+
+def format_league_hits_allowed_note(
+    league_comparison: TeamHitsAllowedLeagueComparison | None,
+) -> str:
+    """Describe the MLB hits-allowed comparison, or say why there is none.
+
+    The wording names where the MLB figure comes from, because a reader could
+    reasonably wonder how a league pitching average exists when only one club's
+    pitching has been imported.
+    """
+    if league_comparison is None:
+        return LEAGUE_HITS_ALLOWED_UNAVAILABLE_NOTE
+
+    league = league_comparison.league
+    return (
+        f"MLB overall averaged {league.hits_per_game:.2f} hits per game across "
+        f"the {league.team_game_records:,} team-game records stored for "
+        f"{league.season}. Every hit is allowed by someone, so league-wide the "
+        f"hits and hits-allowed totals are the same number."
+    )
+
+
+def format_hits_allowed_direction_sentence(
+    league_comparison: TeamHitsAllowedLeagueComparison | None,
+    team_name: str,
+) -> str:
+    """Say which side of MLB the team is on, in words rather than a sign.
+
+    The card shows a signed number, and on this page the negative one is the
+    good one — the reverse of the hits page. Rather than trusting a reader to
+    hold that in mind, this renders the direction and says what it means.
+    """
+    if league_comparison is None:
+        return ""
+
+    difference = league_comparison.difference_vs_mlb
+    # Under half a hundredth rounds to +0.00 on the card, where "above" or
+    # "below" would be a claim the number does not support.
+    if abs(difference) < 0.005:
+        return (
+            f"{team_name}'s pitchers allowed hits at the same rate as MLB "
+            f"overall across the stored season."
+        )
+    direction = "fewer" if difference < 0 else "more"
+    return (
+        f"{team_name}'s pitchers allowed {abs(difference):.2f} {direction} hits "
+        f"per game than MLB overall across the stored season."
     )

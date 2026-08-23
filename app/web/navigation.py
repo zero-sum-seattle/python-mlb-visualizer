@@ -1,8 +1,9 @@
 """Links between the analytics pages, keeping the reader's selection intact.
 
 Moving between hits, batting strikeouts, runs, baserunners, run differential,
-pitching, and the normalized comparison should not throw away the team, season, and
-rolling window the reader chose, so each link carries them forward. Only selections
+pitching, hits allowed, and the normalized comparison should not throw away the
+team, season, and rolling window the reader chose, so each link carries them
+forward. Only selections
 that are actually set are added, so a page that has no team yet links to a
 plain path rather than one with empty parameters.
 """
@@ -16,6 +17,7 @@ RUNS_PATH = "/runs"
 BASERUNNERS_PATH = "/baserunners"
 RUN_DIFFERENTIAL_PATH = "/run-differential"
 PITCHING_PATH = "/pitching"
+HITS_ALLOWED_PATH = "/hits-allowed"
 COMPARISON_PATH = "/comparison"
 
 HITS_LABEL = "Hits"
@@ -24,6 +26,7 @@ RUNS_LABEL = "Runs"
 BASERUNNERS_LABEL = "Baserunners"
 RUN_DIFFERENTIAL_LABEL = "Run Differential"
 PITCHING_LABEL = "Pitching"
+HITS_ALLOWED_LABEL = "Hits Allowed"
 COMPARISON_LABEL = "Comparison"
 
 
@@ -84,6 +87,11 @@ def build_nav_links(
             label=PITCHING_LABEL,
             href=f"{PITCHING_PATH}{suffix}",
             is_current=current_path == PITCHING_PATH,
+        ),
+        NavLink(
+            label=HITS_ALLOWED_LABEL,
+            href=f"{HITS_ALLOWED_PATH}{suffix}",
+            is_current=current_path == HITS_ALLOWED_PATH,
         ),
         NavLink(
             label=COMPARISON_LABEL,
