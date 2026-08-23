@@ -1,0 +1,318 @@
+"""Tests for MLB-wide baserunners analytics and the rules that gate them.
+
+Two rules decide whether an MLB Baserunners/Game may be shown: the
+league-season coverage state, and whether every counted record actually
+carries both a walk and a hit-by-pitch total. Both are exercised here,
+offline, from normalized batting lines. ``league_games`` pins hits and
+hit-by-pitch at 0, so a chosen list of baserunners equals the walk total
+directly.
+"""
+
+from datetime import datetime
+
+import pytest
+
+from app.analytics.league_baserunners import (
+    LeagueBaserunnersAnalysisError,
+    MissingLeagueBaserunnerDataError,
+    build_league_baserunners_context,
+    compare_team_baserunners_to_league,
+    supports_league_wide_baserunners_average,
+)
+from app.analytics.team_baserunners import build_team_baserunners_analysis
+from app.schemas.ingestion import (
+    LeagueSeasonIngestionState,
+    LeagueSeasonIngestionStatus,
+)
+from tests.factories import (
+    MARINERS_ID,
+    MARINERS_NAME,
+    TWINS_ID,
+    TWINS_NAME,
+    make_league_baserunners_context,
+    make_season,
+)
+
+ANGELS_ID = 108
+ANGELS_NAME = "Los Angeles Angels"
+
+
+def coverage(
+    status: LeagueSeasonIngestionStatus,
+    *,
+    season: int = 2025,
+) -> LeagueSeasonIngestionState:
+    """Build a persisted coverage state in one of its three real shapes."""
+    started = datetime(2026, 3, 1, 12, 0, 0)
+    if status is LeagueSeasonIngestionStatus.RUNNING:
+        return LeagueSeasonIngestionState(
+            season=season,
+            status=status,
+            expected_team_count=30,
+            successful_team_count=0,
+            failed_team_count=0,
+            started_at=started,
+        )
+    failed = 0 if status is LeagueSeasonIngestionStatus.COMPLETE else 1
+    return LeagueSeasonIngestionState(
+        season=season,
+        status=status,
+        expected_team_count=30,
+        successful_team_count=30 - failed,
+        failed_team_count=failed,
+        started_at=started,
+        completed_at=datetime(2026, 3, 1, 12, 30, 0),
+    )
+
+
+def league_games(
+    baserunners: list[int | None],
+    *,
+    team_id: int = MARINERS_ID,
+    team_name: str = MARINERS_NAME,
+    season: int = 2025,
+):
+    """Build one team's stored season whose baserunners equal the given values."""
+    length = len(baserunners)
+    return make_season(
+        hits=[0] * length,
+        base_on_balls=baserunners,
+        hit_by_pitch=[0] * length,
+        team_id=team_id,
+        team_name=team_name,
+        season=season,
+    )
+
+
+def team_analysis(baserunners: list[int], *, window: int = 2, season: int = 2025):
+    return build_team_baserunners_analysis(
+        league_games(list(baserunners), season=season), rolling_window=window
+    )
+
+
+# ---------------------------------------------------------------- the formula
+
+
+def test_mlb_baserunners_per_game_is_total_over_total_team_game_records() -> None:
+    context = build_league_baserunners_context(league_games([10, 8, 6]))
+    assert context.total_baserunners == 24
+    assert context.team_game_records == 3
+    assert context.baserunners_per_game == pytest.approx(8.0)
+
+
+def test_unequal_team_game_counts_are_weighted_by_games_played() -> None:
+    """The average is game-weighted, not the mean of each club's own average.
+
+    Team A: 10 and 8 baserunners. Team B: 6 in its only game.
+
+        game-weighted    : (10 + 8 + 6) / 3 == 8.0   <- what this must be
+        mean of averages : ((10 + 8) / 2 + 6) / 2 == 7.5
+    """
+    games = [
+        *league_games([10, 8], team_id=MARINERS_ID, team_name=MARINERS_NAME),
+        *league_games([6], team_id=TWINS_ID, team_name=TWINS_NAME),
+    ]
+    context = build_league_baserunners_context(games)
+    assert context.baserunners_per_game == pytest.approx(8.0)
+    assert context.baserunners_per_game != pytest.approx(7.5)
+
+
+def test_several_teams_in_one_season_are_accepted() -> None:
+    games = [
+        *league_games([9, 9], team_id=MARINERS_ID, team_name=MARINERS_NAME),
+        *league_games([7, 11], team_id=TWINS_ID, team_name=TWINS_NAME),
+        *league_games([8, 4], team_id=ANGELS_ID, team_name=ANGELS_NAME),
+    ]
+    context = build_league_baserunners_context(games)
+    assert context.teams_represented == 3
+    assert context.team_game_records == 6
+    assert context.total_baserunners == 48
+    assert context.baserunners_per_game == pytest.approx(8.0)
+    assert context.season == 2025
+
+
+def test_mixed_seasons_are_rejected() -> None:
+    games = [
+        *league_games([8], season=2025),
+        *league_games([9], season=2026),
+    ]
+    with pytest.raises(LeagueBaserunnersAnalysisError, match="one season"):
+        build_league_baserunners_context(games)
+
+
+def test_empty_input_is_rejected() -> None:
+    """No records means no MLB average, not an average of nothing."""
+    with pytest.raises(LeagueBaserunnersAnalysisError, match="no team-game records"):
+        build_league_baserunners_context([])
+
+
+def test_a_partial_season_is_still_averaged_over_the_games_it_holds() -> None:
+    """An in-progress season divides by its own record count, not 162 or 4,860."""
+    games = [
+        *league_games([9] * 40, season=2026, team_id=MARINERS_ID),
+        *league_games([7] * 38, season=2026, team_id=TWINS_ID, team_name=TWINS_NAME),
+    ]
+    context = build_league_baserunners_context(games)
+    assert context.team_game_records == 78
+    assert context.baserunners_per_game == pytest.approx((9 * 40 + 7 * 38) / 78)
+
+
+def test_a_game_without_a_baserunner_counts_as_a_game() -> None:
+    """Nobody reached base is a real zero, unlike an unknown total."""
+    context = build_league_baserunners_context(league_games([0, 8, 4]))
+    assert (context.total_baserunners, context.team_game_records) == (12, 3)
+    assert context.baserunners_per_game == pytest.approx(4.0)
+
+
+# ------------------------------------------------- legacy rows with no totals
+
+
+def test_a_single_unknown_walk_total_refuses_the_league_context() -> None:
+    """One legacy row is enough: the rest are not MLB overall on their own."""
+    games = [
+        *league_games([10, 10], team_id=MARINERS_ID),
+        *league_games([None], team_id=TWINS_ID, team_name=TWINS_NAME),
+    ]
+    with pytest.raises(MissingLeagueBaserunnerDataError) as exc_info:
+        build_league_baserunners_context(games)
+
+    error = exc_info.value
+    assert (error.records_missing, error.records_total) == (1, 3)
+    assert error.season == 2025
+
+
+def test_an_unknown_hit_by_pitch_total_also_refuses_the_context() -> None:
+    games = make_season(
+        hits=[0, 0],
+        base_on_balls=[10, 10],
+        hit_by_pitch=[0, None],
+    )
+    with pytest.raises(MissingLeagueBaserunnerDataError) as exc_info:
+        build_league_baserunners_context(games)
+    assert exc_info.value.records_missing == 1
+
+
+def test_unknown_totals_are_never_read_as_zero() -> None:
+    """A zero would drag the MLB average down with a fabricated value."""
+    games = league_games([10, None, 10])
+    with pytest.raises(MissingLeagueBaserunnerDataError):
+        build_league_baserunners_context(games)
+
+
+def test_a_fully_legacy_season_reports_every_record_as_missing() -> None:
+    with pytest.raises(MissingLeagueBaserunnerDataError) as exc_info:
+        build_league_baserunners_context(league_games([None, None, None]))
+    assert exc_info.value.records_missing == 3
+
+
+def test_the_missing_data_error_names_the_backfill_remedy() -> None:
+    with pytest.raises(MissingLeagueBaserunnerDataError, match="re-import"):
+        build_league_baserunners_context(league_games([None]))
+
+
+def test_mixed_seasons_are_rejected_before_missing_data_is_reported() -> None:
+    """The input is not a season at all, so a record count would mislead."""
+    games = [
+        *league_games([None], season=2025),
+        *league_games([8], season=2026),
+    ]
+    with pytest.raises(LeagueBaserunnersAnalysisError, match="one season"):
+        build_league_baserunners_context(games)
+
+
+# ------------------------------------------------------------- the comparison
+
+
+def test_a_team_with_more_baserunners_than_mlb_gets_a_positive_difference() -> None:
+    analysis = team_analysis([9, 9, 9])
+    league = make_league_baserunners_context(
+        total_baserunners=840, team_game_records=100
+    )
+    result = compare_team_baserunners_to_league(analysis, league)
+    assert result.team_baserunners_per_game == pytest.approx(9.0)
+    assert result.difference_vs_mlb == pytest.approx(0.60)
+
+
+def test_a_team_with_fewer_baserunners_than_mlb_gets_a_negative_difference() -> None:
+    analysis = team_analysis([8, 8, 8, 7])
+    league = make_league_baserunners_context(
+        total_baserunners=840, team_game_records=100
+    )
+    result = compare_team_baserunners_to_league(analysis, league)
+    assert result.team_baserunners_per_game == pytest.approx(7.75)
+    assert result.difference_vs_mlb == pytest.approx(-0.65)
+
+
+def test_the_comparison_reuses_the_team_season_average_it_was_given() -> None:
+    """One team average on the page, so the card and the chart cannot disagree."""
+    analysis = team_analysis([3, 4, 5, 12])
+    result = compare_team_baserunners_to_league(
+        analysis, make_league_baserunners_context()
+    )
+    assert result.team_baserunners_per_game == analysis.summary.season_average
+
+
+def test_the_comparison_carries_the_team_identity_and_league_context() -> None:
+    analysis = team_analysis([8] * 4)
+    league = make_league_baserunners_context(
+        teams_represented=30, team_game_records=100, total_baserunners=840
+    )
+    result = compare_team_baserunners_to_league(analysis, league)
+    assert (result.team_id, result.team_name) == (MARINERS_ID, MARINERS_NAME)
+    assert result.season == 2025
+    assert result.league == league
+
+
+def test_comparing_across_seasons_is_rejected() -> None:
+    analysis = team_analysis([8] * 4, season=2026)
+    league = make_league_baserunners_context(season=2025)
+    with pytest.raises(LeagueBaserunnersAnalysisError, match="2026"):
+        compare_team_baserunners_to_league(analysis, league)
+
+
+def test_a_team_matching_mlb_reads_as_a_real_zero() -> None:
+    """0.00 means matched exactly; unavailable is a separate state entirely."""
+    analysis = team_analysis([8, 8])
+    league = make_league_baserunners_context(
+        total_baserunners=800, team_game_records=100
+    )
+    result = compare_team_baserunners_to_league(analysis, league)
+    assert result.difference_vs_mlb == 0.0
+
+
+# ---------------------------------------------------------- the coverage rule
+
+
+def test_complete_coverage_allows_a_comparison() -> None:
+    assert supports_league_wide_baserunners_average(
+        coverage(LeagueSeasonIngestionStatus.COMPLETE)
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [LeagueSeasonIngestionStatus.INCOMPLETE, LeagueSeasonIngestionStatus.RUNNING],
+)
+def test_other_coverage_states_refuse_a_comparison(
+    status: LeagueSeasonIngestionStatus,
+) -> None:
+    assert not supports_league_wide_baserunners_average(coverage(status))
+
+
+def test_a_season_with_no_coverage_record_refuses_a_comparison() -> None:
+    assert not supports_league_wide_baserunners_average(None)
+
+
+def test_complete_coverage_does_not_by_itself_produce_an_average() -> None:
+    """Coverage says every team was refreshed, not that the rows carry totals."""
+    assert supports_league_wide_baserunners_average(
+        coverage(LeagueSeasonIngestionStatus.COMPLETE)
+    )
+    with pytest.raises(MissingLeagueBaserunnerDataError):
+        build_league_baserunners_context(league_games([9, None, 7]))
+
+
+def test_more_teams_than_records_is_refused_by_the_context() -> None:
+    """A team cannot be represented without at least one stored record."""
+    with pytest.raises(ValueError, match="teams_represented"):
+        make_league_baserunners_context(teams_represented=30, team_game_records=10)

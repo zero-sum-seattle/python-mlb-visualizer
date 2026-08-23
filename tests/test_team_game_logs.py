@@ -162,6 +162,8 @@ def test_completed_home_game_is_normalized() -> None:
         hits=6,
         runs=4,
         strikeouts=5,
+        base_on_balls=5,
+        hit_by_pitch=0,
         status="Final",
         game_number=1,
         doubleheader=False,
@@ -183,6 +185,8 @@ def test_completed_away_game_is_normalized() -> None:
         hits=5,
         runs=3,
         strikeouts=10,
+        base_on_balls=4,
+        hit_by_pitch=0,
         status="Final",
         game_number=1,
         doubleheader=False,
@@ -771,6 +775,89 @@ def test_conflicting_duplicate_strikeouts_raise_data_error() -> None:
     with pytest.raises(TeamGameDataError) as excinfo:
         collect(client)
     assert "strikeouts 5 vs 12" in str(excinfo.value)
+
+
+# ------------------------------------------------------- baserunner components
+
+
+def client_with_stat_field(game_pk: int, field: str, value: Any) -> FakeMlb:
+    """Build a client whose hitting game log has one modified stat field.
+
+    Pass ``REMOVE_FIELD`` to drop the key entirely, or ``None`` to keep the key
+    with a JSON null.
+    """
+    payload = load_payload("cubs_2025_hitting_game_log")
+    for split in payload["stats"][0]["splits"]:
+        if split["game"]["gamePk"] == game_pk:
+            if value is REMOVE_FIELD:
+                split["stat"].pop(field, None)
+            else:
+                split["stat"][field] = value
+    return FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+
+
+def test_walks_and_hit_by_pitch_are_read_from_the_hitting_game_log() -> None:
+    line = by_game_pk(collect(make_client()))[776618]
+    assert (line.base_on_balls, line.hit_by_pitch) == (3, 1)
+
+
+def test_baserunner_components_are_collected_without_an_extra_mlb_request() -> None:
+    client = make_client()
+    lines = collect(client)
+    assert all(line.base_on_balls is not None for line in lines)
+    assert all(line.hit_by_pitch is not None for line in lines)
+    assert sorted(client.calls) == ["get_schedule", "get_team", "get_team_stats"]
+
+
+@pytest.mark.parametrize("field", ["baseOnBalls", "hitByPitch"])
+def test_absent_baserunner_field_raises_data_error(field: str) -> None:
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_with_stat_field(776704, field, REMOVE_FIELD))
+    message = str(excinfo.value)
+    assert field in message
+    assert "776704" in message
+
+
+@pytest.mark.parametrize("field", ["baseOnBalls", "hitByPitch"])
+def test_null_baserunner_field_raises_data_error(field: str) -> None:
+    """An explicit JSON null is as unusable as an absent field."""
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_with_stat_field(776704, field, None))
+    message = str(excinfo.value)
+    assert field in message
+    assert "776704" in message
+
+
+@pytest.mark.parametrize("field", ["baseOnBalls", "hitByPitch"])
+def test_negative_baserunner_field_raises_data_error(field: str) -> None:
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client_with_stat_field(776704, field, -2))
+    message = str(excinfo.value)
+    assert "negative" in message
+    assert "776704" in message
+
+
+def test_zero_walks_is_kept_as_a_real_value() -> None:
+    line = by_game_pk(collect(client_with_stat_field(776704, "baseOnBalls", 0)))[776704]
+    assert line.base_on_balls == 0
+
+
+def test_conflicting_duplicate_walks_raise_data_error() -> None:
+    payload = load_payload("cubs_2025_hitting_game_log")
+    splits = payload["stats"][0]["splits"]
+    conflicting = copy.deepcopy(splits[0])
+    conflicting["stat"]["baseOnBalls"] = 99
+    splits.append(conflicting)
+    client = FakeMlb(
+        team_stats=build_team_stats(payload),
+        schedule=build_schedule(load_payload("cubs_2025_schedule")),
+    )
+    with pytest.raises(TeamGameDataError) as excinfo:
+        collect(client)
+    assert "base_on_balls 5 vs 99" in str(excinfo.value)
 
 
 def drop_game_log_splits(payload: dict[str, Any], *game_pks: int) -> dict[str, Any]:

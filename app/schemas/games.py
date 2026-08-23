@@ -42,6 +42,26 @@ class TeamGameBattingLine(BaseModel):
             "real count."
         ),
     )
+    base_on_balls: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Times the selected team's hitters drew a walk. Optional only so "
+            "rows persisted before this metric was collected keep an honest "
+            "unknown value; normalization of a fresh MLB response requires a "
+            "real count."
+        ),
+    )
+    hit_by_pitch: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Times the selected team's hitters were hit by a pitch. Optional "
+            "only so rows persisted before this metric was collected keep an "
+            "honest unknown value; normalization of a fresh MLB response "
+            "requires a real count."
+        ),
+    )
     status: str = Field(min_length=1, description="Detailed MLB game status.")
     game_number: int = Field(
         ge=1,

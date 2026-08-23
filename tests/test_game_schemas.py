@@ -107,3 +107,34 @@ def test_explicit_none_strikeouts_is_accepted() -> None:
 def test_negative_strikeouts_are_rejected() -> None:
     with pytest.raises(ValidationError):
         TeamGameBattingLine(**{**VALID_LINE, "strikeouts": -1})
+
+
+@pytest.mark.parametrize("field", ["base_on_balls", "hit_by_pitch"])
+def test_baserunner_components_are_accepted_when_present(field: str) -> None:
+    line = TeamGameBattingLine(**{**VALID_LINE, field: 3})
+    assert getattr(line, field) == 3
+
+
+@pytest.mark.parametrize("field", ["base_on_balls", "hit_by_pitch"])
+def test_zero_baserunner_components_are_real_values(field: str) -> None:
+    """A game with no walks, or no hit batters, is real, unlike a missing total."""
+    assert getattr(TeamGameBattingLine(**{**VALID_LINE, field: 0}), field) == 0
+
+
+@pytest.mark.parametrize("field", ["base_on_balls", "hit_by_pitch"])
+def test_baserunner_components_default_to_none_for_rows_predating_collection(
+    field: str,
+) -> None:
+    """Rows persisted before this metric shipped carry an unknown, not a zero."""
+    assert getattr(TeamGameBattingLine(**VALID_LINE), field) is None
+
+
+@pytest.mark.parametrize("field", ["base_on_balls", "hit_by_pitch"])
+def test_explicit_none_baserunner_components_are_accepted(field: str) -> None:
+    assert getattr(TeamGameBattingLine(**{**VALID_LINE, field: None}), field) is None
+
+
+@pytest.mark.parametrize("field", ["base_on_balls", "hit_by_pitch"])
+def test_negative_baserunner_components_are_rejected(field: str) -> None:
+    with pytest.raises(ValidationError):
+        TeamGameBattingLine(**{**VALID_LINE, field: -1})

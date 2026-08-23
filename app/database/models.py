@@ -44,6 +44,14 @@ class TeamGameBattingLineRecord(Base):
             "strikeouts IS NULL OR strikeouts >= 0",
             name="strikeouts_nonnegative_or_unknown",
         ),
+        CheckConstraint(
+            "base_on_balls IS NULL OR base_on_balls >= 0",
+            name="base_on_balls_nonnegative_or_unknown",
+        ),
+        CheckConstraint(
+            "hit_by_pitch IS NULL OR hit_by_pitch >= 0",
+            name="hit_by_pitch_nonnegative_or_unknown",
+        ),
         CheckConstraint("game_number >= 1", name="game_number_min"),
         CheckConstraint("scheduled_innings >= 1", name="scheduled_innings_min"),
         CheckConstraint(
@@ -75,6 +83,10 @@ class TeamGameBattingLineRecord(Base):
     # collected have an unknown total, which is not the same as zero. A
     # re-import replaces the NULL with the real MLB value.
     strikeouts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Nullable for the same reason as strikeouts: rows persisted before these
+    # two columns existed have an unknown total, not a zero one.
+    base_on_balls: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hit_by_pitch: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     game_number: Mapped[int] = mapped_column(Integer, nullable=False)
     doubleheader: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -100,6 +112,8 @@ class TeamGameBattingLineRecord(Base):
             hits=self.hits,
             runs=self.runs,
             strikeouts=self.strikeouts,
+            base_on_balls=self.base_on_balls,
+            hit_by_pitch=self.hit_by_pitch,
             status=self.status,
             game_number=self.game_number,
             doubleheader=self.doubleheader,
@@ -117,6 +131,8 @@ class TeamGameBattingLineRecord(Base):
         self.hits = line.hits
         self.runs = line.runs
         self.strikeouts = line.strikeouts
+        self.base_on_balls = line.base_on_balls
+        self.hit_by_pitch = line.hit_by_pitch
         self.status = line.status
         self.game_number = line.game_number
         self.doubleheader = line.doubleheader
@@ -142,6 +158,8 @@ class TeamGameBattingLineRecord(Base):
             hits=line.hits,
             runs=line.runs,
             strikeouts=line.strikeouts,
+            base_on_balls=line.base_on_balls,
+            hit_by_pitch=line.hit_by_pitch,
             status=line.status,
             game_number=line.game_number,
             doubleheader=line.doubleheader,

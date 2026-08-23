@@ -4,10 +4,10 @@ These models are the contract between the analytics layer and everything that
 presents it. They carry finished numbers, not raw MLB payloads, and they keep
 dates as ``date`` objects so presentation can choose its own formatting.
 
-Hits, batting strikeouts, and runs are modelled separately rather than through
-a shared metric type. They are read the same way but mean different things, and
-honest duplication is cheaper to follow than an abstraction covering three
-cases.
+Hits, batting strikeouts, runs, and baserunners are modelled separately rather
+than through a shared metric type. They are read the same way but mean
+different things, and honest duplication is cheaper to follow than an
+abstraction covering four cases.
 """
 
 from __future__ import annotations
@@ -727,5 +727,212 @@ class TeamRunsLeagueComparison(BaseModel):
             raise ValueError(
                 f"difference_vs_mlb ({self.difference_vs_mlb}) must equal "
                 f"team_runs_per_game - league.runs_per_game ({expected})"
+            )
+        return self
+
+
+class TeamBaserunnersPoint(BaseModel):
+    """One completed game plotted on the team baserunners chart."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    game_pk: int = Field(gt=0, description="MLB game identifier.")
+    game_number: int = Field(
+        ge=1,
+        description="MLB game number on the date, 2 for the second game of a "
+        "doubleheader. Used for ordering, not for the x axis.",
+    )
+    season_game_number: int = Field(
+        ge=1,
+        description="Continuous 1-based position of the game within the season.",
+    )
+    game_date: date = Field(description="Official date the game counts against.")
+    opponent_name: str = Field(
+        min_length=1, description="Display name of the opponent."
+    )
+    home_away: HomeAway = Field(description="Whether the team was home or away.")
+    baserunners: int = Field(
+        ge=0,
+        description="Times the team's hitters reached base by hit, walk, or "
+        "hit-by-pitch in this game: hits + base_on_balls + hit_by_pitch. Never "
+        "None: a game with an unknown component total is refused rather than "
+        "plotted.",
+    )
+    rolling_average: float = Field(
+        ge=0,
+        description="Trailing rolling baserunners-per-game average ending at "
+        "this game.",
+    )
+
+
+class TeamBaserunnersSummary(BaseModel):
+    """Headline numbers describing a team-season's baserunners.
+
+    ``season_average`` is the single authoritative season average; the chart's
+    reference line and the summary card both read it from here.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    games_played: int = Field(ge=1, description="Completed games analysed.")
+    season_average: float = Field(
+        ge=0,
+        description="Baserunners per game across the stored completed games.",
+    )
+    recent_average: float = Field(
+        ge=0,
+        description="Baserunners per game over the most recent rolling window.",
+    )
+    prior_window_average: float | None = Field(
+        default=None,
+        ge=0,
+        description="Baserunners per game over the window immediately before "
+        "the recent one, or None when two complete windows do not exist.",
+    )
+    change_vs_prior_window: float | None = Field(
+        default=None,
+        description="recent_average - prior_window_average, or None.",
+    )
+
+    @model_validator(mode="after")
+    def _prior_window_fields_agree(self) -> TeamBaserunnersSummary:
+        has_prior = self.prior_window_average is not None
+        has_change = self.change_vs_prior_window is not None
+        if has_prior != has_change:
+            raise ValueError(
+                "prior_window_average and change_vs_prior_window must both be "
+                "present or both be None"
+            )
+        return self
+
+
+class TeamBaserunnersAnalysis(BaseModel):
+    """A team-season's baserunners trend, ready to chart."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id.")
+    team_name: str = Field(min_length=1, description="Historical name for the season.")
+    season: int = Field(gt=0, description="Season analysed.")
+    rolling_window: int = Field(ge=1, description="Games in the trailing window.")
+    points: tuple[TeamBaserunnersPoint, ...] = Field(
+        min_length=1, description="Games in chart order."
+    )
+    summary: TeamBaserunnersSummary
+
+    @model_validator(mode="after")
+    def _summary_matches_points(self) -> TeamBaserunnersAnalysis:
+        if self.summary.games_played != len(self.points):
+            raise ValueError(
+                "summary.games_played must equal the number of chart points"
+            )
+        return self
+
+    @property
+    def last_game_date(self) -> date:
+        """Date of the most recent completed game in the analysis."""
+        return self.points[-1].game_date
+
+
+class LeagueBaserunnersContext(BaseModel):
+    """MLB-wide baserunners context for one season.
+
+    Built from every persisted team-game batting line for the season, so
+    ``baserunners_per_game`` is a game-weighted mean across team-game records
+    rather than the unweighted mean of each club's own average. Teams do not
+    all play the same number of games, so those two numbers are not the same
+    statistic.
+
+    Every counted record must carry known ``hits``, ``base_on_balls``, and
+    ``hit_by_pitch`` totals. A season holding even one record missing any of
+    those three cannot produce this context at all, because an average over
+    the rows that happen to have every value is not an MLB-wide average.
+
+    Every field describes the games **currently stored** for the season. For a
+    season still being played that is the completed games held by the most
+    recent complete league-wide refresh, not a whole season.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    season: int = Field(gt=0, description="Season the context describes.")
+    teams_represented: int = Field(
+        ge=1,
+        description="Distinct teams with at least one stored game in the season.",
+    )
+    team_game_records: int = Field(
+        ge=1,
+        description="Team-game batting lines counted. One MLB game contributes "
+        "two records once both clubs are stored, so this is not a game count.",
+    )
+    total_baserunners: int = Field(
+        ge=0,
+        description="Baserunners (hits + base_on_balls + hit_by_pitch) summed "
+        "across every counted team-game record.",
+    )
+    baserunners_per_game: float = Field(
+        ge=0,
+        description="total_baserunners / team_game_records.",
+    )
+
+    @model_validator(mode="after")
+    def _baserunners_per_game_matches_the_totals(self) -> LeagueBaserunnersContext:
+        expected = self.total_baserunners / self.team_game_records
+        if not isclose(self.baserunners_per_game, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"baserunners_per_game ({self.baserunners_per_game}) must equal "
+                f"total_baserunners / team_game_records ({expected})"
+            )
+        if self.teams_represented > self.team_game_records:
+            raise ValueError(
+                f"teams_represented ({self.teams_represented}) cannot exceed "
+                f"team_game_records ({self.team_game_records})"
+            )
+        return self
+
+
+class TeamBaserunnersLeagueComparison(BaseModel):
+    """One team's baserunners per game placed beside MLB overall for the same season.
+
+    Purely descriptive. A difference here says the selected team put runners on
+    base more or fewer times per game than MLB across the stored season; it
+    carries no claim of significance, and neither direction is labelled good or
+    bad. Reaching base more often is not automatically better than a club doing
+    other things well.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    team_id: int = Field(gt=0, description="MLB team id of the selected team.")
+    team_name: str = Field(min_length=1, description="Name for the season.")
+    season: int = Field(gt=0, description="Season compared.")
+    team_baserunners_per_game: float = Field(
+        ge=0,
+        description="The selected team's average across its stored games, taken "
+        "from TeamBaserunnersSummary.season_average so the page cannot disagree "
+        "with itself.",
+    )
+    league: LeagueBaserunnersContext = Field(
+        description="MLB-wide context compared against."
+    )
+    difference_vs_mlb: float = Field(
+        description="team_baserunners_per_game - league.baserunners_per_game. "
+        "Positive means the team put runners on base more times per game than "
+        "MLB overall, negative fewer.",
+    )
+
+    @model_validator(mode="after")
+    def _comparison_is_internally_consistent(self) -> TeamBaserunnersLeagueComparison:
+        if self.season != self.league.season:
+            raise ValueError(
+                f"season ({self.season}) must match the league context season "
+                f"({self.league.season})"
+            )
+        expected = self.team_baserunners_per_game - self.league.baserunners_per_game
+        if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError(
+                f"difference_vs_mlb ({self.difference_vs_mlb}) must equal "
+                f"team_baserunners_per_game - league.baserunners_per_game "
+                f"({expected})"
             )
         return self
