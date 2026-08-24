@@ -43,6 +43,7 @@ from app.schemas.ingestion import (
     LeagueSeasonIngestionStatus,
     LeagueTeamIngestionStatus,
 )
+from app.services import concurrent_league_season_ingestion
 from app.services.concurrent_league_season_ingestion import (
     DEFAULT_CONCURRENCY,
     InvalidConcurrencyError,
@@ -53,7 +54,10 @@ from app.services.league_season_ingestion import (
     ingest_league_season,
 )
 from app.services.league_teams import NoMlbTeamsDiscoveredError
-from app.services.team_season_ingestion import persist_team_season
+from app.services.team_season_ingestion import (
+    TeamSeasonIngestionError,
+    persist_team_season,
+)
 from tests.test_league_season_ingestion import (
     CUBS_GAME_COUNT,
     CUBS_ID,
@@ -96,6 +100,16 @@ class AsyncFakeLeagueMlb:
         self.requests_in_flight = 0
         self.max_requests_in_flight = 0
         self.request_log: list[str] = []
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+    async def __aenter__(self) -> "AsyncFakeLeagueMlb":
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()
 
     async def _answer(self, label: str, answer: Callable[[], Any]) -> Any:
         self.request_log.append(label)
@@ -434,6 +448,30 @@ def test_a_run_is_refused_a_bound_below_one(migrated_session: Session) -> None:
         run_concurrently(migrated_session, client=async_league_client(), concurrency=0)
 
 
+def test_one_client_serves_the_whole_run_and_is_closed(
+    migrated_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run opens one client, not one per club, and closes what it opened."""
+    client = wide_league(6)
+    monkeypatch.setattr(concurrent_league_season_ingestion, "AsyncMlb", lambda: client)
+
+    result = asyncio.run(
+        ingest_league_season_concurrently(
+            session=migrated_session, season=SEASON, concurrency=3
+        )
+    )
+
+    assert result.teams_discovered == 6
+    assert client.closed is True
+
+
+def test_a_supplied_client_is_not_closed(migrated_session: Session) -> None:
+    client = async_league_client()
+    run_concurrently(migrated_session, client=client)
+    assert client.closed is False
+
+
 def test_the_default_bound_is_used_when_none_is_given(
     migrated_session: Session,
 ) -> None:
@@ -674,6 +712,61 @@ def test_incomplete_coverage_is_recorded_with_its_counts(
     assert state.status is LeagueSeasonIngestionStatus.INCOMPLETE
     assert (state.expected_team_count, state.successful_team_count) == (2, 1)
     assert state.failed_team_count == 1
+
+
+def test_a_club_that_cannot_be_persisted_is_recorded_as_failed(
+    migrated_session: Session,
+) -> None:
+    """A persistence failure is a per-club failure, not a failed run."""
+    real = persist_team_season
+
+    def fail_for_the_mariners(**kwargs: Any) -> Any:
+        if kwargs["team_id"] == MARINERS_ID:
+            raise TeamSeasonIngestionError("Unable to persist")
+        return real(**kwargs)
+
+    module = "app.services.concurrent_league_season_ingestion.persist_team_season"
+    with patch(module, side_effect=fail_for_the_mariners):
+        result = run_concurrently(migrated_session, client=async_league_client())
+
+    assert result.teams_succeeded == 1
+    assert result.teams_failed == 1
+    assert result.status is LeagueSeasonIngestionStatus.INCOMPLETE
+    failed = next(
+        team
+        for team in result.team_results
+        if team.status is LeagueTeamIngestionStatus.FAILED
+    )
+    assert failed.team_id == MARINERS_ID
+    assert "TeamSeasonIngestionError" in (failed.error or "")
+    assert (
+        len(list_team_season(migrated_session, team_id=CUBS_ID, season=SEASON))
+        == CUBS_GAME_COUNT
+    )
+
+
+def test_an_unexpected_failure_ends_the_run_rather_than_failing_one_club(
+    migrated_session: Session,
+) -> None:
+    """Matching the sequential service: only ingestion errors become results.
+
+    The run is abandoned, so coverage stays RUNNING — the honest state for a
+    run that never established anything.
+    """
+
+    class Unexpected(Exception):
+        pass
+
+    with pytest.raises(Unexpected):
+        run_concurrently(
+            migrated_session,
+            client=async_league_client(mariners_stats=Unexpected("boom")),
+        )
+
+    state = get_league_season_ingestion(migrated_session, season=SEASON)
+    assert state is not None
+    assert state.status is LeagueSeasonIngestionStatus.RUNNING
+    assert state.completed_at is None
 
 
 def test_a_rerun_after_a_failure_can_reach_complete(

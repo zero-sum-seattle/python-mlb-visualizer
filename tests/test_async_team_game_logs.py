@@ -19,6 +19,7 @@ from mlbstatsapi.exceptions import MlbTransportError
 from mlbstatsapi.models.schedules import Schedule
 from mlbstatsapi.models.teams import Team
 
+from app.services import async_league_teams, async_team_game_logs
 from app.services.async_league_teams import discover_mlb_teams_async
 from app.services.async_team_game_logs import get_team_game_lines_async
 from app.services.league_teams import (
@@ -51,6 +52,16 @@ class AsyncFakeMlb:
         self.sync = sync
         self._teams = teams or []
         self.call_order: list[str] = []
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+    async def __aenter__(self) -> "AsyncFakeMlb":
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()
 
     async def get_team(self, team_id: int, **params: Any) -> Team | None:
         self.call_order.append("get_team")
@@ -216,3 +227,36 @@ def test_async_discovery_refuses_an_empty_response() -> None:
 def test_async_discovery_refuses_a_repeated_team_id() -> None:
     with pytest.raises(MlbTeamDiscoveryError):
         discover_async([make_team(CUBS_ID, "Chicago Cubs"), make_team(CUBS_ID, "Cubs")])
+
+
+# --------------------------------------------------------------------------
+# Client ownership
+# --------------------------------------------------------------------------
+
+
+def test_a_client_created_for_one_team_season_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AsyncFakeMlb(make_client())
+    monkeypatch.setattr(async_team_game_logs, "AsyncMlb", lambda: client)
+
+    batting, _ = asyncio.run(get_team_game_lines_async(CUBS_ID, SEASON))
+
+    assert batting != []
+    assert client.closed is True
+
+
+def test_a_supplied_client_is_not_closed() -> None:
+    client = AsyncFakeMlb(make_client())
+    fetch_async(client)
+    assert client.closed is False
+
+
+def test_a_client_created_for_discovery_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AsyncFakeMlb(FakeMlb(), teams=[make_team(CUBS_ID, "Chicago Cubs")])
+    monkeypatch.setattr(async_league_teams, "AsyncMlb", lambda: client)
+
+    assert asyncio.run(discover_mlb_teams_async(SEASON)) != []
+    assert client.closed is True
