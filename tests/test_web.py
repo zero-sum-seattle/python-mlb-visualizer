@@ -496,7 +496,15 @@ def test_no_web_route_triggers_league_ingestion(
     monkeypatch.setattr(
         "app.services.league_season_ingestion.ingest_league_season", fail
     )
+    monkeypatch.setattr(
+        "app.services.concurrent_league_season_ingestion."
+        "ingest_league_season_concurrently",
+        fail,
+    )
     monkeypatch.setattr("app.services.league_teams.discover_mlb_teams", fail)
+    monkeypatch.setattr(
+        "app.services.async_league_teams.discover_mlb_teams_async", fail
+    )
 
     seed(hits=[7] * 20, strikeouts=[8] * 20)
     assert client.get("/").status_code == 200

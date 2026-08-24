@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from scripts import import_league_season as league_cli
@@ -15,6 +15,7 @@ from app.schemas.ingestion import (
     LeagueTeamIngestionResult,
     LeagueTeamIngestionStatus,
 )
+from app.services.concurrent_league_season_ingestion import DEFAULT_CONCURRENCY
 from app.services.league_season_ingestion import (
     InvalidSeasonError,
     LeagueIngestionStateError,
@@ -110,10 +111,109 @@ def run_cli(
         return league_cli.main(argv)
 
 
+def run_async_cli(
+    argv: list[str],
+    *,
+    result: LeagueSeasonIngestionResult,
+) -> tuple[int, AsyncMock]:
+    """Run the CLI with the concurrent service replaced by an async double."""
+    concurrent = AsyncMock(return_value=result)
+    with (
+        patch(
+            "scripts.import_league_season.get_settings", return_value=MEMORY_SETTINGS
+        ),
+        patch(
+            "scripts.import_league_season.ingest_league_season_concurrently",
+            new=concurrent,
+        ),
+    ):
+        return league_cli.main(argv), concurrent
+
+
 def test_argument_parsing() -> None:
     args = league_cli.build_parser().parse_args(["--season", "2025"])
     assert args.season == 2025
     assert args.format == "table"
+    assert args.use_async is False
+    assert args.concurrency is None
+
+
+def test_async_argument_parsing() -> None:
+    args = league_cli.build_parser().parse_args(
+        ["--season", "2025", "--async", "--concurrency", "12"]
+    )
+    assert args.use_async is True
+    assert args.concurrency == 12
+
+
+def test_sequential_is_the_default() -> None:
+    """The concurrent service is opt-in, so an existing invocation is unchanged."""
+    with (
+        patch(
+            "scripts.import_league_season.get_settings", return_value=MEMORY_SETTINGS
+        ),
+        patch(
+            "scripts.import_league_season.ingest_league_season",
+            return_value=COMPLETE_RESULT,
+        ) as sequential,
+        patch(
+            "scripts.import_league_season.ingest_league_season_concurrently"
+        ) as concurrent,
+    ):
+        assert league_cli.main(["--season", "2025"]) == 0
+    assert sequential.call_count == 1
+    assert concurrent.call_count == 0
+
+
+def test_async_flag_runs_the_concurrent_service() -> None:
+    with patch("scripts.import_league_season.ingest_league_season") as sequential:
+        exit_code, concurrent = run_async_cli(
+            ["--season", "2025", "--async"], result=COMPLETE_RESULT
+        )
+    assert exit_code == 0
+    assert sequential.call_count == 0
+    assert concurrent.await_count == 1
+    assert concurrent.await_args.kwargs["season"] == 2025
+    assert concurrent.await_args.kwargs["concurrency"] == DEFAULT_CONCURRENCY
+
+
+def test_concurrency_is_passed_through() -> None:
+    _, concurrent = run_async_cli(
+        ["--season", "2025", "--async", "--concurrency", "3"], result=COMPLETE_RESULT
+    )
+    assert concurrent.await_args.kwargs["concurrency"] == 3
+
+
+def test_concurrency_without_async_is_refused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Refused rather than ignored: a sequential run is not a bounded one."""
+    with pytest.raises(SystemExit) as exit_info:
+        league_cli.main(["--season", "2025", "--concurrency", "4"])
+    assert exit_info.value.code == 2
+    assert "--concurrency requires --async" in capsys.readouterr().err
+
+
+def test_table_output_names_the_mode_it_ran() -> None:
+    assert league_cli.format_mode(use_async=False, concurrency=8) == "Mode: sequential"
+    concurrent = league_cli.format_mode(use_async=True, concurrency=8)
+    assert "concurrent" in concurrent
+    assert "up to 8 clubs" in concurrent
+    assert "completion order" in concurrent
+
+
+def test_a_concurrent_run_reports_its_mode(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_async_cli(["--season", "2025", "--async"], result=COMPLETE_RESULT)
+    assert "Mode: concurrent" in capsys.readouterr().out
+
+
+def test_a_concurrent_incomplete_run_still_exits_two() -> None:
+    exit_code, _ = run_async_cli(
+        ["--season", "2025", "--async"], result=INCOMPLETE_RESULT
+    )
+    assert exit_code == 2
 
 
 def test_table_output_reports_the_totals() -> None:

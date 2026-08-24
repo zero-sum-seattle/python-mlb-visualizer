@@ -5,6 +5,12 @@ Examples
 poetry run alembic upgrade head
 poetry run python scripts/import_league_season.py --season 2025
 poetry run python scripts/import_league_season.py --season 2025 --format json
+poetry run python scripts/import_league_season.py --season 2025 --async
+poetry run python scripts/import_league_season.py --season 2025 --async --concurrency 12
+
+Sequential is the default. ``--async`` runs the concurrent service instead,
+which fetches several clubs from MLB at once; it stores the same rows and
+records the same coverage. See ``docs/concurrent-league-ingestion.md``.
 
 Exit codes
 ----------
@@ -16,11 +22,13 @@ Exit codes
 
 This script calls the live MLB Stats API unless tests replace the client. It is
 not part of the automated test suite. All ingestion behavior lives in
-``app.services.league_season_ingestion``; this file only parses arguments,
-builds dependencies, formats output, and chooses an exit code.
+``app.services.league_season_ingestion`` and
+``app.services.concurrent_league_season_ingestion``; this file only parses
+arguments, builds dependencies, formats output, and chooses an exit code.
 """
 
 import argparse
+import asyncio
 import json
 import sys
 
@@ -33,6 +41,10 @@ from app.schemas.ingestion import (
     LeagueSeasonIngestionStatus,
     LeagueTeamIngestionResult,
     LeagueTeamIngestionStatus,
+)
+from app.services.concurrent_league_season_ingestion import (
+    DEFAULT_CONCURRENCY,
+    ingest_league_season_concurrently,
 )
 from app.services.league_season_ingestion import (
     LeagueSeasonIngestionError,
@@ -63,7 +75,57 @@ def build_parser() -> argparse.ArgumentParser:
         default="table",
         help="Output format (default: table).",
     )
+    parser.add_argument(
+        "--async",
+        dest="use_async",
+        action="store_true",
+        help=(
+            "Fetch several clubs from MLB at once instead of one at a time. "
+            "Stores the same rows and records the same coverage; progress is "
+            "reported in the order clubs finish."
+        ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help=(
+            "With --async, the maximum clubs fetched at once "
+            f"(default: {DEFAULT_CONCURRENCY})."
+        ),
+    )
     return parser
+
+
+def resolve_concurrency(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> int:
+    """Settle the concurrency bound, refusing a bound that would do nothing.
+
+    ``--concurrency`` without ``--async`` is refused rather than ignored, so a
+    sequential run is never mistaken for a bounded concurrent one.
+    """
+    if not args.use_async:
+        if args.concurrency is not None:
+            parser.error("--concurrency requires --async")
+        return DEFAULT_CONCURRENCY
+    if args.concurrency is None:
+        return DEFAULT_CONCURRENCY
+    return args.concurrency
+
+
+def format_mode(*, use_async: bool, concurrency: int) -> str:
+    """Describe which ingestion path this run used.
+
+    Printed so a run can be told apart from the other path when the two are
+    compared, and so the reading of the progress column is not ambiguous.
+    """
+    if not use_async:
+        return "Mode: sequential"
+    return (
+        f"Mode: concurrent (up to {concurrency} clubs fetched at once; "
+        f"progress is completion order)"
+    )
 
 
 def team_outcome(result: LeagueTeamIngestionResult) -> str:
@@ -148,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the league import command and return a process exit code."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    concurrency = resolve_concurrency(parser, args)
     show_progress = args.format == "table"
 
     def on_team_complete(
@@ -161,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if show_progress:
         print(f"MLB League Import — {args.season}")
+        print(format_mode(use_async=args.use_async, concurrency=concurrency))
 
     settings = get_settings()
     engine = build_engine(settings.database_url)
@@ -168,11 +232,21 @@ def main(argv: list[str] | None = None) -> int:
     session = session_factory()
 
     try:
-        result = ingest_league_season(
-            session=session,
-            season=args.season,
-            on_team_complete=on_team_complete if show_progress else None,
-        )
+        if args.use_async:
+            result = asyncio.run(
+                ingest_league_season_concurrently(
+                    session=session,
+                    season=args.season,
+                    concurrency=concurrency,
+                    on_team_complete=on_team_complete if show_progress else None,
+                )
+            )
+        else:
+            result = ingest_league_season(
+                session=session,
+                season=args.season,
+                on_team_complete=on_team_complete if show_progress else None,
+            )
     except MlbTeamDiscoveryError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
