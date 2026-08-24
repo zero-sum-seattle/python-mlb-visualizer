@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {%- if state == "ok" -%}
+    {{ analysis.team_name }} {{ analysis.season }} Hits Allowed Trends
+  {%- else -%}
+    Team Hits Allowed Trends
+  {%- endif -%}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if state == "ok" %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+  {% if state != "empty" %}
+    <script src="/static/js/season-selector.js" defer></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Team Hits Allowed Trends</h1>
+    <p class="page-intro__subtitle">
+      See how many hits a team's pitching is surrendering per game as the
+      season progresses &mdash; the mirror of the Hits page.
+    </p>
+  </section>
+
+  {% if state == "empty" %}
+    <section class="card notice">
+      <h2>No team data has been imported yet</h2>
+      <p>Import a team-season, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    {% include "_selector_form.html" %}
+
+    {% if state == "not_found" %}
+      <section class="card notice">
+        <h2>That team-season is not stored locally</h2>
+        <p>{{ not_found_message }}</p>
+        <p>Import it with:</p>
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% elif state == "missing_pitching_data" %}
+      <section class="card notice">
+        <h2>This team-season has no pitching data</h2>
+        <p>
+          {{ selected_team.team_name }}'s {{ selected_season }} games are stored,
+          but they were imported before pitching was collected. Hits allowed is
+          recorded on the pitching line, which is a separate MLB stat group in
+          its own request &mdash; so it is not something the existing rows can
+          be read for.
+        </p>
+        <p>
+          Re-import the team-season to fetch it. The batting rows are left in
+          place and updated rather than replaced:
+        </p>
+        <pre class="command"><code>{{ reimport_command }}</code></pre>
+        <p>
+          The hits, batting strikeouts, runs, baserunners, and run differential
+          charts read the batting rows and are unaffected.
+        </p>
+      </section>
+    {% else %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>{{ analysis.team_name }} &mdash; Hits Allowed per Game</h2>
+          <p class="chart-card__season">{{ analysis.season }} regular season</p>
+        </header>
+        <div class="chart-card__figure">{{ chart_html | safe }}</div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        {% for card in summary_cards %}
+          <article class="card summary-card">
+            <p class="summary-card__label">{{ card.label }}</p>
+            <p class="summary-card__value">{{ card.value }}</p>
+            <p class="summary-card__caption">{{ card.caption }}</p>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="about">
+        <span class="about__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+            <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div class="about__body">
+          <h2>About this chart</h2>
+          <p>
+            Each point is the number of hits {{ analysis.team_name }}'s pitchers
+            surrendered in one completed game. The
+            {{ rolling_average_label|lower }} covers that game and the
+            {{ analysis.rolling_window - 1 }} games before it, and early-season
+            points use every game played so far. The dashed line is the team's
+            average across the completed games currently stored for this season.
+          </p>
+          <p>
+            <strong>Lower is better here</strong>, which is the opposite of the
+            Hits page this one mirrors. A negative <strong>vs MLB</strong> value
+            means the team allowed fewer hits per game than the league.
+            {{ direction_sentence }}
+          </p>
+          <p>
+            {% if league_comparison %}
+              The dotted line is MLB overall.
+            {% endif %}
+            {{ league_comparison_note }}
+          </p>
+          <h3>Where the MLB average comes from</h3>
+          <p>
+            From the batting table, not the pitching one. Every hit by one team
+            is a hit allowed by another, so summed across the whole league the
+            two totals are the same number over the same count of team-game
+            records. That means this comparison needs only a complete
+            league-wide <em>batting</em> import, which is why it is available
+            here while the ERA comparison on the Pitching page usually is not.
+          </p>
+          <p>
+            The identity holds for the league as a whole and not for any part of
+            it. One club's hits allowed has nothing to do with its own hits.
+          </p>
+          <h3>Hits Allowed/Game and H/9 are different</h3>
+          <p>
+            The chart is a per-game count. <strong>H/9</strong> in the cards is a
+            rate: total hits allowed over total innings, scaled to nine. They
+            differ whenever a team pitches other than regulation length &mdash;
+            extra innings raise the per-game figure without raising the rate,
+            and a game where the home team never batted in the ninth does the
+            reverse.
+          </p>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if state == "ok" %}
+    <span>Data through {{ data_through }}</span>
+  {% endif %}
+  <span>Source: MLB Stats API via python-mlb-statsapi</span>
+{% endblock %}

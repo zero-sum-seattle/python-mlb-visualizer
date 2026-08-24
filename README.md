@@ -19,6 +19,7 @@ Normal browser requests do **not** call the MLB Stats API.
 - Team Baserunners/Game trends (hits + walks + hit-by-pitch)
 - Team run differential and Pythagorean expected record, from a league-wide import
 - Team pitching: pitches per game, with ERA, WHIP, K/9 and BB/9
+- Team hits allowed per game, with an MLB comparison and H/9
 - MLB-wide per-game comparisons when league coverage is trustworthy
 - Normalized Hits vs batting Strikeouts comparison with MLB average = 100
 - Team, season, and rolling-window selectors with shareable URLs
@@ -141,6 +142,7 @@ Current routes:
 | `/baserunners` | Team Baserunners/Game |
 | `/run-differential` | Team run differential and Pythagorean record |
 | `/pitching` | Team pitches per game, with ERA and WHIP |
+| `/hits-allowed` | Team hits allowed per game, with H/9 |
 | `/comparison` | Normalized Hits vs batting Strikeouts |
 | `/health` | JSON health check |
 
@@ -301,6 +303,36 @@ rolling window, which accumulates earned runs and outs rather than smoothing
 game ERAs, and to the league context, whose rates are outs-weighted rather than
 game-weighted.
 
+### Hits allowed
+
+`hits_allowed` is stored on the pitching line, so `/hits-allowed` needs no
+migration and no new MLB request beyond the pitching import itself. A
+team-season without pitching rows returns the same 409 the pitching page does.
+
+Two properties make this page unusual.
+
+**The figure agrees with the opposing batting row.** Every hit by one team is a
+hit allowed by another, and MLB reports the two in independently fetched stat
+groups. Across all 162 games of the 2025 Mariners, `hits_allowed` on the
+pitching row equals the opponent's own `hits` on their batting row, with zero
+mismatches.
+
+**The MLB average comes from the batting table.** Summed across the whole
+league, hits and hits allowed are the same total over the same count of
+team-game records:
+
+```text
+MLB Hits Allowed/Game  ==  MLB Hits/Game     2025: 40,138 / 4,860 = 8.2588
+```
+
+So this comparison needs a complete league-wide **batting** import, which most
+stored seasons have — not every club's pitching, which the ERA comparison on
+`/pitching` requires. The identity holds for the league as a whole and not for
+any subset: one club's hits allowed has nothing to do with its own hits.
+
+Direction note: fewer hits allowed is better, the reverse of the Hits page this
+one mirrors. The summary card caption and a rendered sentence both say so.
+
 ### Normalized comparison
 
 The comparison page puts two different statistics on a common scale:
@@ -401,6 +433,7 @@ including:
 - [Team baserunners visualization](docs/team-baserunners-visualization.md)
 - [Team run differential visualization](docs/team-run-differential-visualization.md)
 - [Team pitching visualization](docs/team-pitching-visualization.md)
+- [Team hits allowed visualization](docs/team-hits-allowed-visualization.md)
 - [Team vs MLB comparison](docs/team-vs-mlb-comparison.md)
 - [Normalized hitting trends comparison](docs/team-hitting-trends-comparison.md)
 - [League-season ingestion](docs/league-season-ingestion.md)
