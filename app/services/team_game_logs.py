@@ -33,8 +33,25 @@ team-season. A team-season missing a completed game is refused rather than
 returned short, because a caller cannot tell a short season from a real one.
 
 See ``docs/team-game-data-spike.md`` for the investigation behind this choice.
+
+Retrieval and rules are deliberately separable
+----------------------------------------------
+Every step below is one of two things: *asking MLB something*, or *deciding
+what an answer means*. The second kind — which parameters describe the data we
+want, which responses are usable, how a game log joins the schedule, which
+games count as completed, how a split becomes a domain record — is the
+baseball logic, and it is exported under public names so a caller using a
+different HTTP transport reuses it rather than restating it. ``request``,
+``translating_``, ``require_``, ``index_`` and ``normalize_`` names are that
+shared surface.
+
+The functions in this module that actually call a client are the synchronous
+ones, and they remain the reference implementation of the order those steps
+happen in.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date
 from typing import Literal, Protocol
 
@@ -111,6 +128,66 @@ class MlbGameDataClient(Protocol):
     ) -> Schedule | None: ...
 
 
+def team_game_log_request(*, season: int, group: str) -> dict[str, object]:
+    """Keyword arguments for the ``get_team_stats`` call behind one game log.
+
+    Which stat type is asked for, which stat group, and the regular-season-only
+    game type are decisions about *which baseball data this application
+    ingests*, so they are owned here rather than by whichever client transport
+    happens to make the call. The team id is passed positionally by the caller,
+    matching the client's own signature.
+    """
+    return {
+        "stats": [GAME_LOG_STAT_TYPE],
+        "groups": [group],
+        "season": season,
+        "gameType": REGULAR_SEASON_GAME_TYPE,
+    }
+
+
+def team_schedule_request(*, team_id: int, season: int) -> dict[str, object]:
+    """Keyword arguments for the ``get_schedule`` call behind a team-season.
+
+    The whole calendar year is requested rather than a guessed opening-day to
+    closing-day window, and the sport and game type restrict the answer to
+    Major League regular-season games. Those are the same kind of
+    baseball-data decision as ``team_game_log_request``, and are owned here for
+    the same reason.
+    """
+    return {
+        "start_date": f"{season}-01-01",
+        "end_date": f"{season}-12-31",
+        "sport_id": MLB_SPORT_ID,
+        "team_id": team_id,
+        "gameTypes": REGULAR_SEASON_GAME_TYPE,
+    }
+
+
+@contextmanager
+def translating_team_lookup_failure(team_id: int, season: int) -> Iterator[None]:
+    """Report an upstream team-lookup failure as this service's own error.
+
+    Every transport that fetches a team-season reports the same failure the
+    same way, so the wording and the exception type live here rather than
+    being restated per transport.
+    """
+    try:
+        yield
+    except TheMlbStatsApiException as exc:
+        raise TeamGameLogError(
+            f"Unable to retrieve MLB team {team_id} for {season}"
+        ) from exc
+
+
+@contextmanager
+def translating_game_data_failure() -> Iterator[None]:
+    """Report an upstream schedule or game-log failure as this service's error."""
+    try:
+        yield
+    except TheMlbStatsApiException as exc:
+        raise TeamGameLogError("Unable to retrieve MLB game data") from exc
+
+
 def get_team_game_batting_lines(
     team_id: int,
     season: int,
@@ -153,8 +230,8 @@ def _collect_batting_lines(
     season: int,
 ) -> list[TeamGameBattingLine]:
     team = _fetch_mlb_team(client, team_id, season)
-    scheduled_games = _index_schedule_games(_fetch_schedule(client, team_id, season))
-    return _normalize_batting_log(
+    scheduled_games = index_schedule_games(_fetch_schedule(client, team_id, season))
+    return normalize_batting_log(
         _fetch_hitting_game_log(client, team_id, season),
         team=team,
         season=season,
@@ -162,14 +239,19 @@ def _collect_batting_lines(
     )
 
 
-def _normalize_batting_log(
+def normalize_batting_log(
     game_log: list[HittingGameLog],
     *,
     team: Team,
     season: int,
     scheduled_games: dict[int, ScheduleGames],
 ) -> list[TeamGameBattingLine]:
-    """Join a hitting game log to the schedule and normalize every completed game."""
+    """Join a hitting game log to the schedule and normalize every completed game.
+
+    Takes an already-retrieved game log, so it holds the join, the
+    completed-game rule, and the reverse completeness check for every caller
+    regardless of how the log was fetched.
+    """
     lines: dict[int, TeamGameBattingLine] = {}
     for split in game_log:
         game_pk = split.game.game_pk
@@ -236,14 +318,14 @@ def _collect_both_lines(
     season: int,
 ) -> tuple[list[TeamGameBattingLine], list[TeamGamePitchingLine]]:
     team = _fetch_mlb_team(client, team_id, season)
-    scheduled_games = _index_schedule_games(_fetch_schedule(client, team_id, season))
-    batting = _normalize_batting_log(
+    scheduled_games = index_schedule_games(_fetch_schedule(client, team_id, season))
+    batting = normalize_batting_log(
         _fetch_hitting_game_log(client, team_id, season),
         team=team,
         season=season,
         scheduled_games=scheduled_games,
     )
-    pitching = _normalize_pitching_log(
+    pitching = normalize_pitching_log(
         _fetch_pitching_game_log(client, team_id, season),
         team=team,
         season=season,
@@ -298,8 +380,8 @@ def _collect_pitching_lines(
     season: int,
 ) -> list[TeamGamePitchingLine]:
     team = _fetch_mlb_team(client, team_id, season)
-    scheduled_games = _index_schedule_games(_fetch_schedule(client, team_id, season))
-    return _normalize_pitching_log(
+    scheduled_games = index_schedule_games(_fetch_schedule(client, team_id, season))
+    return normalize_pitching_log(
         _fetch_pitching_game_log(client, team_id, season),
         team=team,
         season=season,
@@ -307,14 +389,18 @@ def _collect_pitching_lines(
     )
 
 
-def _normalize_pitching_log(
+def normalize_pitching_log(
     game_log: list[PitchingGameLog],
     *,
     team: Team,
     season: int,
     scheduled_games: dict[int, ScheduleGames],
 ) -> list[TeamGamePitchingLine]:
-    """Join a pitching game log to the schedule and normalize every completed game."""
+    """Join a pitching game log to the schedule and normalize every completed game.
+
+    Like ``normalize_batting_log``, this takes an already-retrieved game log so
+    the rules are shared across transports.
+    """
     lines: dict[int, TeamGamePitchingLine] = {}
     for split in game_log:
         game_pk = split.game.game_pk
@@ -458,22 +544,13 @@ def _normalize_pitching_line(
         raise TeamGameDataError(f"Could not normalize {context}: {exc}") from exc
 
 
-def _fetch_pitching_game_log(
-    client: MlbGameDataClient,
+def require_pitching_game_log(
+    stat_groups: dict,
+    *,
     team_id: int,
     season: int,
 ) -> list[PitchingGameLog]:
-    try:
-        stat_groups = client.get_team_stats(
-            team_id,
-            stats=[GAME_LOG_STAT_TYPE],
-            groups=[PITCHING_STAT_GROUP],
-            season=season,
-            gameType=REGULAR_SEASON_GAME_TYPE,
-        )
-    except TheMlbStatsApiException as exc:
-        raise TeamGameLogError("Unable to retrieve MLB game data") from exc
-
+    """Refuse a pitching stat response that carries no usable game log."""
     try:
         game_log = stat_groups[PITCHING_STAT_GROUP][GAME_LOG_STAT_TYPE]
     except (KeyError, TypeError) as exc:
@@ -495,6 +572,19 @@ def _fetch_pitching_game_log(
                 f"for team {team_id} in {season}"
             )
     return splits
+
+
+def _fetch_pitching_game_log(
+    client: MlbGameDataClient,
+    team_id: int,
+    season: int,
+) -> list[PitchingGameLog]:
+    with translating_game_data_failure():
+        stat_groups = client.get_team_stats(
+            team_id,
+            **team_game_log_request(season=season, group=PITCHING_STAT_GROUP),
+        )
+    return require_pitching_game_log(stat_groups, team_id=team_id, season=season)
 
 
 def _require_every_completed_scheduled_game(
@@ -538,15 +628,13 @@ def _require_every_completed_scheduled_game(
     )
 
 
-def _fetch_mlb_team(client: MlbGameDataClient, team_id: int, season: int) -> Team:
-    """Look the team up for the requested season to get its name for that season."""
-    try:
-        team = client.get_team(team_id, season=season)
-    except TheMlbStatsApiException as exc:
-        raise TeamGameLogError(
-            f"Unable to retrieve MLB team {team_id} for {season}"
-        ) from exc
+def require_mlb_team(team: Team | None, *, team_id: int, season: int) -> Team:
+    """Refuse a team lookup that did not return a usable Major League club.
 
+    ``sportId`` is re-checked on the record itself so a club that is not a
+    Major League team cannot have a team-season ingested for it, whichever
+    transport performed the lookup.
+    """
     if team is None:
         raise TeamNotFoundError(f"No MLB team found for team id {team_id} in {season}")
     if team.sport is None or team.sport.id != MLB_SPORT_ID:
@@ -556,22 +644,25 @@ def _fetch_mlb_team(client: MlbGameDataClient, team_id: int, season: int) -> Tea
     return team
 
 
-def _fetch_hitting_game_log(
-    client: MlbGameDataClient,
+def _fetch_mlb_team(client: MlbGameDataClient, team_id: int, season: int) -> Team:
+    """Look the team up for the requested season to get its name for that season."""
+    with translating_team_lookup_failure(team_id, season):
+        team = client.get_team(team_id, season=season)
+    return require_mlb_team(team, team_id=team_id, season=season)
+
+
+def require_hitting_game_log(
+    stat_groups: dict,
+    *,
     team_id: int,
     season: int,
 ) -> list[HittingGameLog]:
-    try:
-        stat_groups = client.get_team_stats(
-            team_id,
-            stats=[GAME_LOG_STAT_TYPE],
-            groups=[HITTING_STAT_GROUP],
-            season=season,
-            gameType=REGULAR_SEASON_GAME_TYPE,
-        )
-    except TheMlbStatsApiException as exc:
-        raise TeamGameLogError("Unable to retrieve MLB game data") from exc
+    """Refuse a hitting stat response that carries no usable game log.
 
+    An empty or absent game log is a data-integrity failure rather than a
+    team-season with no games: the application cannot tell one from the other,
+    and returning nothing would let a club be recorded as covered.
+    """
     try:
         game_log = stat_groups[HITTING_STAT_GROUP][GAME_LOG_STAT_TYPE]
     except KeyError as exc:
@@ -595,18 +686,26 @@ def _fetch_hitting_game_log(
     return splits
 
 
-def _fetch_schedule(client: MlbGameDataClient, team_id: int, season: int) -> Schedule:
-    try:
-        schedule = client.get_schedule(
-            start_date=f"{season}-01-01",
-            end_date=f"{season}-12-31",
-            sport_id=MLB_SPORT_ID,
-            team_id=team_id,
-            gameTypes=REGULAR_SEASON_GAME_TYPE,
+def _fetch_hitting_game_log(
+    client: MlbGameDataClient,
+    team_id: int,
+    season: int,
+) -> list[HittingGameLog]:
+    with translating_game_data_failure():
+        stat_groups = client.get_team_stats(
+            team_id,
+            **team_game_log_request(season=season, group=HITTING_STAT_GROUP),
         )
-    except TheMlbStatsApiException as exc:
-        raise TeamGameLogError("Unable to retrieve MLB game data") from exc
+    return require_hitting_game_log(stat_groups, team_id=team_id, season=season)
 
+
+def require_team_schedule(
+    schedule: Schedule | None,
+    *,
+    team_id: int,
+    season: int,
+) -> Schedule:
+    """Refuse a team-season with no schedule to join the game logs against."""
     if schedule is None:
         raise TeamGameDataError(
             f"No regular-season schedule returned for team {team_id} in {season}"
@@ -614,7 +713,15 @@ def _fetch_schedule(client: MlbGameDataClient, team_id: int, season: int) -> Sch
     return schedule
 
 
-def _index_schedule_games(schedule: Schedule) -> dict[int, ScheduleGames]:
+def _fetch_schedule(client: MlbGameDataClient, team_id: int, season: int) -> Schedule:
+    with translating_game_data_failure():
+        schedule = client.get_schedule(
+            **team_schedule_request(team_id=team_id, season=season),
+        )
+    return require_team_schedule(schedule, team_id=team_id, season=season)
+
+
+def index_schedule_games(schedule: Schedule) -> dict[int, ScheduleGames]:
     """Index a team schedule by ``gamePk``, preferring completed entries.
 
     A postponed game keeps its ``gamePk`` when it is made up, and a suspended

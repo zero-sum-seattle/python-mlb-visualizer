@@ -45,6 +45,16 @@ the previous run never finished, so the season's coverage is unknown and must
 not be trusted. The next invocation overwrites it and proceeds normally. There
 is no lease, heartbeat, or resume checkpoint, because idempotent full reruns
 make them unnecessary.
+
+Shared with other orchestrations
+--------------------------------
+The rules a league-wide run is made of — which seasons may be requested, how a
+club's failure is recorded, how the aggregate result is built and validated,
+and when coverage may be written — are public functions here rather than
+private steps of the loop below. An orchestration that visits the same clubs in
+a different order calls them; it does not restate them. ``ingest_league_season``
+remains the reference implementation and the thing such a run is checked
+against.
 """
 
 from collections.abc import Callable, Iterator
@@ -78,6 +88,12 @@ from app.services.team_season_ingestion import (
 MLB_FIRST_SEASON = 1876
 
 TeamProgressCallback = Callable[[int, int, LeagueTeamIngestionResult], None]
+
+# The failures a single club is allowed to have inside a league-wide run. A club
+# that cannot be fetched or persisted must not abort the other twenty-nine.
+# Anything else is unexpected and propagates rather than being recorded as an
+# ordinary missing team.
+LEAGUE_TEAM_INGESTION_ERRORS = (TeamGameLogError, TeamSeasonIngestionError)
 
 
 class LeagueSeasonIngestionError(Exception):
@@ -141,7 +157,7 @@ def ingest_league_season(
     LeagueIngestionStateError
         Coverage state could not be persisted.
     """
-    _validate_season(season)
+    validate_season(season)
 
     if client is not None:
         return _ingest(
@@ -159,7 +175,7 @@ def ingest_league_season(
         )
 
 
-def _validate_season(season: int) -> None:
+def validate_season(season: int) -> None:
     """Reject a season MLB could not have played.
 
     The upper bound is next year rather than this year so a season can be
@@ -181,14 +197,13 @@ def _ingest(
     on_team_complete: TeamProgressCallback | None,
 ) -> LeagueSeasonIngestionResult:
     teams = discover_mlb_teams(season, client=client)
-    started_at = _now()
-    with _coverage_transaction(session, season):
-        record_league_season_ingestion_start(
-            session,
-            season=season,
-            expected_team_count=len(teams),
-            started_at=started_at,
-        )
+    started_at = now_for_ingestion()
+    record_run_started(
+        session,
+        season=season,
+        expected_team_count=len(teams),
+        started_at=started_at,
+    )
 
     team_results: list[LeagueTeamIngestionResult] = []
     for position, team in enumerate(teams, start=1):
@@ -197,23 +212,63 @@ def _ingest(
         if on_team_complete is not None:
             on_team_complete(position, len(teams), result)
 
+    result = build_league_result(
+        season=season,
+        teams_discovered=len(teams),
+        team_results=team_results,
+        started_at=started_at,
+        completed_at=now_for_ingestion(),
+    )
+    record_run_finished(session, result)
+    return result
+
+
+def record_run_started(
+    session: Session,
+    *,
+    season: int,
+    expected_team_count: int,
+    started_at: datetime,
+) -> None:
+    """Reset the season's coverage row to RUNNING before any club is fetched.
+
+    A season's coverage is only ever as good as its most recent league-wide
+    ingestion, so a new run invalidates the old answer the moment it begins
+    rather than leaving a stale COMPLETE readable while clubs are re-fetched.
+    """
+    with _coverage_transaction(session, season):
+        record_league_season_ingestion_start(
+            session,
+            season=season,
+            expected_team_count=expected_team_count,
+            started_at=started_at,
+        )
+
+
+def build_league_result(
+    *,
+    season: int,
+    teams_discovered: int,
+    team_results: list[LeagueTeamIngestionResult],
+    started_at: datetime,
+    completed_at: datetime,
+) -> LeagueSeasonIngestionResult:
+    """Aggregate per-club results into the validated result for one run.
+
+    A run is COMPLETE only when no club failed, and the aggregate counts are
+    summed from the per-club counts rather than recounted from the database.
+    Constructing the model validates invariants the coverage row cannot express
+    on its own, such as each discovered team appearing exactly once.
+    """
     succeeded = sum(
         1
         for result in team_results
         if result.status is LeagueTeamIngestionStatus.SUCCEEDED
     )
     failed = len(team_results) - succeeded
-    completed_at = _now()
-
-    # Built and validated before any coverage state is written. The result
-    # model enforces invariants the coverage row cannot express on its own,
-    # such as each discovered team appearing exactly once. Persisting first
-    # would let the database claim COMPLETE for a run the domain model then
-    # rejects, so the validated result is the precondition for recording
-    # coverage rather than a description of what was already recorded.
-    result = LeagueSeasonIngestionResult(
+    return LeagueSeasonIngestionResult(
         season=season,
-        teams_discovered=len(teams),
+        teams_discovered=teams_discovered,
         teams_succeeded=succeeded,
         teams_failed=failed,
         team_game_records_fetched=sum(team.fetched for team in team_results),
@@ -230,10 +285,23 @@ def _ingest(
         team_results=tuple(team_results),
     )
 
-    with _coverage_transaction(session, season):
+
+def record_run_finished(
+    session: Session,
+    result: LeagueSeasonIngestionResult,
+) -> None:
+    """Record what a finished run covered.
+
+    Takes an already-constructed result on purpose. The result model enforces
+    invariants the coverage row cannot, so recording coverage first would let
+    the database claim COMPLETE for a run the domain model then rejects. The
+    validated result is the precondition for writing coverage, not a
+    description of what was already written.
+    """
+    with _coverage_transaction(session, result.season):
         record_league_season_ingestion_finish(
             session,
-            season=season,
+            season=result.season,
             expected_team_count=result.teams_discovered,
             successful_team_count=result.teams_succeeded,
             failed_team_count=result.teams_failed,
@@ -241,7 +309,20 @@ def _ingest(
             completed_at=result.completed_at,
         )
 
-    return result
+
+def league_team_failure(team: MlbTeam, exc: Exception) -> LeagueTeamIngestionResult:
+    """Record one club's failure as a per-team result.
+
+    The club keeps its identity and carries the error message, so an operator
+    or a rerun can tell exactly which club is missing and why. The message
+    format is part of what a run reports, so it is written once here.
+    """
+    return LeagueTeamIngestionResult.from_failure(
+        team_id=team.team_id,
+        team_name=team.team_name,
+        season=team.season,
+        error=f"{type(exc).__name__}: {exc}",
+    )
 
 
 def _ingest_one_team(
@@ -250,13 +331,7 @@ def _ingest_one_team(
     team: MlbTeam,
     client: MlbLeagueDataClient,
 ) -> LeagueTeamIngestionResult:
-    """Ingest one club, converting its failure into a recorded per-team result.
-
-    Only the ingestion path's own errors are absorbed here. A club that cannot
-    be fetched or persisted must not abort the other twenty-nine, but anything
-    else is an unexpected failure and is left to propagate rather than being
-    reported as an ordinary missing team.
-    """
+    """Ingest one club, converting its failure into a recorded per-team result."""
     try:
         result = ingest_team_season(
             session=session,
@@ -264,18 +339,13 @@ def _ingest_one_team(
             season=team.season,
             client=client,
         )
-    except (TeamGameLogError, TeamSeasonIngestionError) as exc:
-        _discard_failed_team_transaction(session)
-        return LeagueTeamIngestionResult.from_failure(
-            team_id=team.team_id,
-            team_name=team.team_name,
-            season=team.season,
-            error=f"{type(exc).__name__}: {exc}",
-        )
+    except LEAGUE_TEAM_INGESTION_ERRORS as exc:
+        discard_failed_team_transaction(session)
+        return league_team_failure(team, exc)
     return LeagueTeamIngestionResult.from_team_result(result)
 
 
-def _discard_failed_team_transaction(session: Session) -> None:
+def discard_failed_team_transaction(session: Session) -> None:
     """Leave the session usable for the next team after a failure.
 
     ``ingest_team_season`` commits or rolls back its own transaction, so this is
@@ -299,6 +369,6 @@ def _coverage_transaction(session: Session, season: int) -> Iterator[None]:
         ) from exc
 
 
-def _now() -> datetime:
+def now_for_ingestion() -> datetime:
     """Return a naive UTC timestamp, matching how other rows store time."""
     return datetime.now(UTC).replace(tzinfo=None)

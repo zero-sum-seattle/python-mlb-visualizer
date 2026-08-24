@@ -17,8 +17,17 @@ failure rather than as "this season had no teams".
 what makes the answer season aware: MLB resolves the club set, and each club's
 name, as of that season. See ``docs/league-season-ingestion.md`` for the
 season-aware behavior this relies on and its limitations.
+
+Retrieval and rules are separable here for the same reason they are in
+``team_game_logs``: ``translating_discovery_failure`` and
+``normalize_discovered_teams`` hold everything that decides what a discovery
+response *means*, so a caller using a different HTTP transport reuses those
+rules rather than restating them. The synchronous ``discover_mlb_teams`` below
+remains the reference implementation.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Protocol
 
 from mlbstatsapi import Mlb
@@ -76,14 +85,29 @@ def discover_mlb_teams(
         return _discover(owned_client, season)
 
 
-def _discover(client: MlbTeamDirectoryClient, season: int) -> list[MlbTeam]:
+@contextmanager
+def translating_discovery_failure(season: int) -> Iterator[None]:
+    """Report an upstream team-directory failure as a discovery error.
+
+    The wording and the exception type live here so every transport that
+    performs discovery reports the same failure the same way.
+    """
     try:
-        teams = client.get_teams(sport_id=MLB_SPORT_ID, season=season)
+        yield
     except TheMlbStatsApiException as exc:
         raise MlbTeamDiscoveryError(
             f"Unable to retrieve the MLB teams for {season}"
         ) from exc
 
+
+def normalize_discovered_teams(teams: list[Team], season: int) -> list[MlbTeam]:
+    """Turn a raw team-directory response into the season's eligible clubs.
+
+    Holds every rule about what discovery *means*: which clubs are eligible,
+    what each record must carry, that a repeated id is refused rather than
+    deduplicated, that an empty result is a failure rather than an answer, and
+    the stable name-then-id order a league-wide run visits clubs in.
+    """
     discovered = [
         _normalize_team(team, season) for team in teams if _is_major_league_club(team)
     ]
@@ -93,6 +117,12 @@ def _discover(client: MlbTeamDirectoryClient, season: int) -> list[MlbTeam]:
         )
     _reject_duplicate_team_ids(discovered, season)
     return sorted(discovered, key=lambda team: (team.team_name, team.team_id))
+
+
+def _discover(client: MlbTeamDirectoryClient, season: int) -> list[MlbTeam]:
+    with translating_discovery_failure(season):
+        teams = client.get_teams(sport_id=MLB_SPORT_ID, season=season)
+    return normalize_discovered_teams(teams, season)
 
 
 def _reject_duplicate_team_ids(teams: list[MlbTeam], season: int) -> None:
