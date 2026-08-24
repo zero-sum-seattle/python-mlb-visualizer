@@ -57,7 +57,7 @@ Discovery lives in `app/services/league_teams.py::discover_mlb_teams`.
 before it is accepted:
 
 - `Team.sport.id` must be `1`. This is the same rule the existing single-team
-  path already applies in `team_game_logs._fetch_mlb_team`, so a club that would
+  path already applies in `team_game_logs.require_mlb_team`, so a club that would
   be refused as a single import is refused here too. It also means a broader
   upstream response, or a caller passing extra parameters, cannot pull a minor
   league or other-sport club into an MLB league import.
@@ -194,6 +194,13 @@ load, and predictable SQLite write behavior. No asyncio orchestration, thread or
 process pool, task queue, or worker was added. If a measured runtime later
 proves unacceptable, concurrency should be proposed separately with those
 measurements.
+
+That proposal was made later and is documented separately in
+[`concurrent-league-ingestion.md`](concurrent-league-ingestion.md). The
+sequential path described above is unchanged and remains the default; a
+concurrent path was added beside it, overlapping only the waiting on MLB. The
+paragraph above is left as written because it records the decision taken at the
+time, not because it is still the whole story.
 
 ## 5. Coverage semantics
 

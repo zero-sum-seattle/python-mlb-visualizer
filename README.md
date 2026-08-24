@@ -437,6 +437,7 @@ including:
 - [Team vs MLB comparison](docs/team-vs-mlb-comparison.md)
 - [Normalized hitting trends comparison](docs/team-hitting-trends-comparison.md)
 - [League-season ingestion](docs/league-season-ingestion.md)
+- [Concurrent league ingestion](docs/concurrent-league-ingestion.md)
 - [Team-season ingestion](docs/team-season-ingestion.md)
 - [Team game data investigation](docs/team-game-data-spike.md)
 
