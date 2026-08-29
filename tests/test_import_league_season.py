@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from scripts import import_league_season as league_cli
@@ -16,6 +16,7 @@ from app.schemas.ingestion import (
     LeagueTeamIngestionStatus,
 )
 from app.services.league_season_ingestion import (
+    DEFAULT_LEAGUE_CONCURRENCY,
     InvalidSeasonError,
     LeagueIngestionStateError,
 )
@@ -322,3 +323,113 @@ def test_an_operational_database_error_is_not_relabelled_as_migrations(
     assert exit_code == league_cli.EXIT_ERROR
     assert "alembic upgrade head" not in captured.err
     assert "database is locked" in captured.err
+
+
+# --------------------------------------------------------------------------
+# --async / --concurrency argument handling
+# --------------------------------------------------------------------------
+
+
+def test_async_flag_and_concurrency_parse() -> None:
+    args = league_cli.build_parser().parse_args(
+        ["--season", "2025", "--async", "--concurrency", "8"]
+    )
+    assert args.use_async is True
+    assert args.concurrency == 8
+
+
+def test_async_flag_defaults_to_false_and_no_explicit_concurrency() -> None:
+    args = league_cli.build_parser().parse_args(["--season", "2025"])
+    assert args.use_async is False
+    assert args.concurrency is None
+
+
+def run_async_cli(
+    argv: list[str],
+    *,
+    result: LeagueSeasonIngestionResult | Exception,
+) -> tuple[int, AsyncMock]:
+    """Run the CLI with the async service replaced by an ``AsyncMock``."""
+    mock = AsyncMock(
+        side_effect=result if isinstance(result, Exception) else None,
+        return_value=None if isinstance(result, Exception) else result,
+    )
+    with (
+        patch(
+            "scripts.import_league_season.get_settings", return_value=MEMORY_SETTINGS
+        ),
+        patch("scripts.import_league_season.ingest_league_season_async", mock),
+    ):
+        exit_code = league_cli.main(argv)
+    return exit_code, mock
+
+
+def test_concurrency_without_async_is_a_usage_error() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        league_cli.main(["--season", "2025", "--concurrency", "4"])
+    assert exc_info.value.code == 2
+
+
+def test_zero_concurrency_is_a_usage_error() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        league_cli.main(["--season", "2025", "--async", "--concurrency", "0"])
+    assert exc_info.value.code == 2
+
+
+def test_async_run_invokes_the_async_service_with_the_given_concurrency() -> None:
+    exit_code, mock = run_async_cli(
+        ["--season", "2025", "--async", "--concurrency", "8"], result=COMPLETE_RESULT
+    )
+    assert exit_code == 0
+    assert mock.await_args.kwargs["concurrency"] == 8
+    assert mock.await_args.kwargs["season"] == 2025
+
+
+def test_async_run_without_explicit_concurrency_uses_the_default() -> None:
+    exit_code, mock = run_async_cli(
+        ["--season", "2025", "--async"], result=COMPLETE_RESULT
+    )
+    assert exit_code == 0
+    assert mock.await_args.kwargs["concurrency"] == DEFAULT_LEAGUE_CONCURRENCY
+
+
+def test_sync_run_does_not_touch_the_async_service() -> None:
+    with (
+        patch(
+            "scripts.import_league_season.get_settings", return_value=MEMORY_SETTINGS
+        ),
+        patch(
+            "scripts.import_league_season.ingest_league_season",
+            return_value=COMPLETE_RESULT,
+        ),
+        patch(
+            "scripts.import_league_season.ingest_league_season_async",
+            AsyncMock(),
+        ) as async_mock,
+    ):
+        exit_code = league_cli.main(["--season", "2025"])
+    assert exit_code == 0
+    async_mock.assert_not_awaited()
+
+
+def test_async_incomplete_run_exits_nonzero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code, _ = run_async_cli(
+        ["--season", "2025", "--async"], result=INCOMPLETE_RESULT
+    )
+    captured = capsys.readouterr()
+    assert exit_code == league_cli.EXIT_INCOMPLETE
+    assert "Ingestion coverage: INCOMPLETE" in captured.out
+
+
+def test_async_run_error_is_reported_like_the_sync_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code, _ = run_async_cli(
+        ["--season", "1776", "--async"],
+        result=InvalidSeasonError("Season 1776 is outside 1876-2027"),
+    )
+    captured = capsys.readouterr()
+    assert exit_code == league_cli.EXIT_ERROR
+    assert captured.err.startswith("error: ")

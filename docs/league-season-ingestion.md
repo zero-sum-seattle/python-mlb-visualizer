@@ -195,6 +195,14 @@ process pool, task queue, or worker was added. If a measured runtime later
 proves unacceptable, concurrency should be proposed separately with those
 measurements.
 
+> **Update (issue #31):** a measured runtime did later prove worth addressing.
+> `ingest_league_season` and this sequential design remain unchanged and
+> available as the default and as a reference/debug path. A second,
+> bounded-concurrency entry point, `ingest_league_season_async`, was added
+> alongside it. See `docs/async-league-ingestion.md` for that design; this
+> section is left as-is because it accurately describes why the sequential
+> path exists and was correct at the time it was written.
+
 ## 5. Coverage semantics
 
 ### What "covered" means
