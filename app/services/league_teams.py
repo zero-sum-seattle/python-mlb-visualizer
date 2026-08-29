@@ -45,6 +45,12 @@ class MlbTeamDirectoryClient(Protocol):
     def get_teams(self, sport_id: int = ..., **params: object) -> list[Team]: ...
 
 
+class AsyncMlbTeamDirectoryClient(Protocol):
+    """The async counterpart of ``MlbTeamDirectoryClient``."""
+
+    async def get_teams(self, sport_id: int = ..., **params: object) -> list[Team]: ...
+
+
 def discover_mlb_teams(
     season: int,
     *,
@@ -76,6 +82,34 @@ def discover_mlb_teams(
         return _discover(owned_client, season)
 
 
+async def discover_mlb_teams_async(
+    season: int,
+    *,
+    client: AsyncMlbTeamDirectoryClient,
+) -> list[MlbTeam]:
+    """Async counterpart of ``discover_mlb_teams``.
+
+    Requires an existing ``mlbstatsapi.AsyncMlb`` (or compatible) client,
+    shared with the rest of a concurrent league-wide import rather than
+    created for this call alone. Club filtering, normalization, and the
+    duplicate-id check are the same functions ``discover_mlb_teams`` uses.
+
+    Raises
+    ------
+    NoMlbTeamsDiscoveredError
+        MLB returned no Major League clubs for the season.
+    MlbTeamDiscoveryError
+        The upstream request failed, or a returned club could not be trusted.
+    """
+    try:
+        teams = await client.get_teams(sport_id=MLB_SPORT_ID, season=season)
+    except TheMlbStatsApiException as exc:
+        raise MlbTeamDiscoveryError(
+            f"Unable to retrieve the MLB teams for {season}"
+        ) from exc
+    return _finish_discovery(teams, season)
+
+
 def _discover(client: MlbTeamDirectoryClient, season: int) -> list[MlbTeam]:
     try:
         teams = client.get_teams(sport_id=MLB_SPORT_ID, season=season)
@@ -83,7 +117,15 @@ def _discover(client: MlbTeamDirectoryClient, season: int) -> list[MlbTeam]:
         raise MlbTeamDiscoveryError(
             f"Unable to retrieve the MLB teams for {season}"
         ) from exc
+    return _finish_discovery(teams, season)
 
+
+def _finish_discovery(teams: list[Team], season: int) -> list[MlbTeam]:
+    """Filter, normalize, and validate a raw ``get_teams`` response.
+
+    Shared by the sync and async discovery paths so a season's club set is
+    decided by one implementation regardless of which transport fetched it.
+    """
     discovered = [
         _normalize_team(team, season) for team in teams if _is_major_league_club(team)
     ]

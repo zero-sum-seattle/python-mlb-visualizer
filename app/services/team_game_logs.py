@@ -111,6 +111,43 @@ class MlbGameDataClient(Protocol):
     ) -> Schedule | None: ...
 
 
+class AsyncMlbGameDataClient(Protocol):
+    """The async counterpart of ``MlbGameDataClient``.
+
+    Structurally identical to ``mlbstatsapi.AsyncMlb`` for the calls this
+    service makes: same method names, same parameters, same return types,
+    only awaited. Request parameters, response validation, and normalization
+    are therefore shared with the synchronous path rather than reimplemented;
+    only the transport (fetching with ``await`` instead of a blocking call)
+    differs.
+    """
+
+    async def get_team(
+        self,
+        team_id: int,
+        season: int = ...,
+        **params: object,
+    ) -> Team | None: ...
+
+    async def get_team_stats(
+        self,
+        team_id: int,
+        stats: list[str],
+        groups: list[str],
+        **params: object,
+    ) -> dict: ...
+
+    async def get_schedule(
+        self,
+        date: str | None = ...,
+        start_date: str | None = ...,
+        end_date: str | None = ...,
+        sport_id: int = ...,
+        team_id: int | None = ...,
+        **params: object,
+    ) -> Schedule | None: ...
+
+
 def get_team_game_batting_lines(
     team_id: int,
     season: int,
@@ -245,6 +282,48 @@ def _collect_both_lines(
     )
     pitching = _normalize_pitching_log(
         _fetch_pitching_game_log(client, team_id, season),
+        team=team,
+        season=season,
+        scheduled_games=scheduled_games,
+    )
+    return batting, pitching
+
+
+async def get_team_game_lines_async(
+    team_id: int,
+    season: int,
+    *,
+    client: AsyncMlbGameDataClient,
+) -> tuple[list[TeamGameBattingLine], list[TeamGamePitchingLine]]:
+    """Async counterpart of ``get_team_game_lines``.
+
+    Requires an existing ``mlbstatsapi.AsyncMlb`` (or compatible) client: unlike
+    the sync entry points, this is meant to be called with a client shared
+    across many teams by a concurrent caller such as
+    ``ingest_league_season_async``, never one created per team.
+
+    The four MLB requests (team, schedule, hitting log, pitching log) are
+    awaited one at a time, in the same order the sync path makes them, rather
+    than launched together. Concurrency for a league-wide import happens
+    across teams, not across one team's individual requests; see
+    ``app.services.league_season_ingestion``.
+
+    Raises the same exceptions as ``get_team_game_lines``: the request
+    parameters, response validation, schedule join, completed-game check, and
+    normalization are the identical functions the sync path uses.
+    """
+    team = await _fetch_mlb_team_async(client, team_id, season)
+    scheduled_games = _index_schedule_games(
+        await _fetch_schedule_async(client, team_id, season)
+    )
+    batting = _normalize_batting_log(
+        await _fetch_hitting_game_log_async(client, team_id, season),
+        team=team,
+        season=season,
+        scheduled_games=scheduled_games,
+    )
+    pitching = _normalize_pitching_log(
+        await _fetch_pitching_game_log_async(client, team_id, season),
         team=team,
         season=season,
         scheduled_games=scheduled_games,
@@ -474,6 +553,17 @@ def _fetch_pitching_game_log(
     except TheMlbStatsApiException as exc:
         raise TeamGameLogError("Unable to retrieve MLB game data") from exc
 
+    return _pitching_splits_from_stat_groups(stat_groups, team_id, season)
+
+
+def _pitching_splits_from_stat_groups(
+    stat_groups: dict, team_id: int, season: int
+) -> list[PitchingGameLog]:
+    """Validate a ``get_team_stats`` response and return its pitching splits.
+
+    Shared by the sync and async fetch paths so the response-shape rules are
+    defined once regardless of which transport made the request.
+    """
     try:
         game_log = stat_groups[PITCHING_STAT_GROUP][GAME_LOG_STAT_TYPE]
     except (KeyError, TypeError) as exc:
@@ -495,6 +585,26 @@ def _fetch_pitching_game_log(
                 f"for team {team_id} in {season}"
             )
     return splits
+
+
+async def _fetch_pitching_game_log_async(
+    client: AsyncMlbGameDataClient,
+    team_id: int,
+    season: int,
+) -> list[PitchingGameLog]:
+    """Async counterpart of ``_fetch_pitching_game_log``."""
+    try:
+        stat_groups = await client.get_team_stats(
+            team_id,
+            stats=[GAME_LOG_STAT_TYPE],
+            groups=[PITCHING_STAT_GROUP],
+            season=season,
+            gameType=REGULAR_SEASON_GAME_TYPE,
+        )
+    except TheMlbStatsApiException as exc:
+        raise TeamGameLogError("Unable to retrieve MLB game data") from exc
+
+    return _pitching_splits_from_stat_groups(stat_groups, team_id, season)
 
 
 def _require_every_completed_scheduled_game(
@@ -546,7 +656,24 @@ def _fetch_mlb_team(client: MlbGameDataClient, team_id: int, season: int) -> Tea
         raise TeamGameLogError(
             f"Unable to retrieve MLB team {team_id} for {season}"
         ) from exc
+    return _validate_fetched_team(team, team_id, season)
 
+
+async def _fetch_mlb_team_async(
+    client: AsyncMlbGameDataClient, team_id: int, season: int
+) -> Team:
+    """Async counterpart of ``_fetch_mlb_team``."""
+    try:
+        team = await client.get_team(team_id, season=season)
+    except TheMlbStatsApiException as exc:
+        raise TeamGameLogError(
+            f"Unable to retrieve MLB team {team_id} for {season}"
+        ) from exc
+    return _validate_fetched_team(team, team_id, season)
+
+
+def _validate_fetched_team(team: Team | None, team_id: int, season: int) -> Team:
+    """Validate a ``get_team`` response, shared by the sync and async fetchers."""
     if team is None:
         raise TeamNotFoundError(f"No MLB team found for team id {team_id} in {season}")
     if team.sport is None or team.sport.id != MLB_SPORT_ID:
@@ -572,6 +699,37 @@ def _fetch_hitting_game_log(
     except TheMlbStatsApiException as exc:
         raise TeamGameLogError("Unable to retrieve MLB game data") from exc
 
+    return _hitting_splits_from_stat_groups(stat_groups, team_id, season)
+
+
+async def _fetch_hitting_game_log_async(
+    client: AsyncMlbGameDataClient,
+    team_id: int,
+    season: int,
+) -> list[HittingGameLog]:
+    """Async counterpart of ``_fetch_hitting_game_log``."""
+    try:
+        stat_groups = await client.get_team_stats(
+            team_id,
+            stats=[GAME_LOG_STAT_TYPE],
+            groups=[HITTING_STAT_GROUP],
+            season=season,
+            gameType=REGULAR_SEASON_GAME_TYPE,
+        )
+    except TheMlbStatsApiException as exc:
+        raise TeamGameLogError("Unable to retrieve MLB game data") from exc
+
+    return _hitting_splits_from_stat_groups(stat_groups, team_id, season)
+
+
+def _hitting_splits_from_stat_groups(
+    stat_groups: dict, team_id: int, season: int
+) -> list[HittingGameLog]:
+    """Validate a ``get_team_stats`` response and return its hitting splits.
+
+    Shared by the sync and async fetch paths so the response-shape rules are
+    defined once regardless of which transport made the request.
+    """
     try:
         game_log = stat_groups[HITTING_STAT_GROUP][GAME_LOG_STAT_TYPE]
     except KeyError as exc:
@@ -606,7 +764,30 @@ def _fetch_schedule(client: MlbGameDataClient, team_id: int, season: int) -> Sch
         )
     except TheMlbStatsApiException as exc:
         raise TeamGameLogError("Unable to retrieve MLB game data") from exc
+    return _validate_fetched_schedule(schedule, team_id, season)
 
+
+async def _fetch_schedule_async(
+    client: AsyncMlbGameDataClient, team_id: int, season: int
+) -> Schedule:
+    """Async counterpart of ``_fetch_schedule``."""
+    try:
+        schedule = await client.get_schedule(
+            start_date=f"{season}-01-01",
+            end_date=f"{season}-12-31",
+            sport_id=MLB_SPORT_ID,
+            team_id=team_id,
+            gameTypes=REGULAR_SEASON_GAME_TYPE,
+        )
+    except TheMlbStatsApiException as exc:
+        raise TeamGameLogError("Unable to retrieve MLB game data") from exc
+    return _validate_fetched_schedule(schedule, team_id, season)
+
+
+def _validate_fetched_schedule(
+    schedule: Schedule | None, team_id: int, season: int
+) -> Schedule:
+    """Validate a ``get_schedule`` response, shared by the sync and async fetchers."""
     if schedule is None:
         raise TeamGameDataError(
             f"No regular-season schedule returned for team {team_id} in {season}"
