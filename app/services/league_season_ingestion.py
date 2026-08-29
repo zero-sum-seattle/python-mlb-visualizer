@@ -48,6 +48,14 @@ incidental, so "only one already-fetched team-season is ever being persisted"
 holds even if the persistence code changes later. SQLite is never written to
 from more than one place at once, and no async SQLAlchemy is involved anywhere.
 
+If one team's task raises an exception that is not an ordinary per-team
+failure — or the ``on_team_complete`` callback raises, which is intentionally
+never absorbed — every other team's task is explicitly cancelled and awaited
+before the exception leaves ``ingest_league_season_async``. No sibling task
+can still be mid-fetch, queued behind the concurrency semaphore, or waiting on
+the write lock once the caller sees the error; a team that had already
+finished persisting before the failure keeps its committed rows.
+
 The final result is constructed and validated before coverage is recorded, so a
 result the domain model rejects can never leave the database claiming COMPLETE.
 If that validation fails the error propagates and the row stays ``RUNNING``,
@@ -408,11 +416,40 @@ async def _ingest_async(
             on_team_complete(position, total, result)
         return result
 
-    # ``asyncio.gather`` returns results in the order its arguments were
-    # given, i.e. discovery order, regardless of which team actually finished
-    # first. ``team_results`` therefore lines up with ``teams`` exactly the
-    # way the sequential path's does.
-    team_results = list(await asyncio.gather(*(run_one(team) for team in teams)))
+    # Tasks are created explicitly — not left for ``asyncio.gather`` to wrap
+    # internally — so this function owns them outright. Plain ``gather``
+    # propagates the first exception as soon as one coroutine raises, but
+    # does not cancel the coroutines still running: a sibling team could keep
+    # making MLB requests, or reach ``persist_team_season`` and the shared
+    # session, after this function has already told its caller the run
+    # failed. Owning the tasks lets that be closed off explicitly rather than
+    # left to whatever incidentally cleans up orphaned tasks later (such as
+    # ``asyncio.run``'s shutdown, which only helps when the caller happens to
+    # run this inside a fresh event loop of its own).
+    tasks = [
+        asyncio.create_task(run_one(team), name=f"ingest-team-{team.team_id}")
+        for team in teams
+    ]
+    try:
+        # ``asyncio.gather`` returns results in the order its arguments were
+        # given, i.e. discovery order, regardless of which team actually
+        # finished first. ``team_results`` therefore lines up with ``teams``
+        # exactly the way the sequential path's does.
+        team_results = list(await asyncio.gather(*tasks))
+    except BaseException:
+        # An ordinary per-team failure (``TeamGameLogError`` /
+        # ``TeamSeasonIngestionError``) never reaches here: ``run_one`` already
+        # converts those into a FAILED result instead of raising. Only a truly
+        # unexpected exception from a team, or one raised by
+        # ``on_team_complete``, lands in this branch — and once it does, every
+        # other team task is cancelled and awaited to completion before the
+        # exception is allowed to leave this function, so no still-running
+        # task remains capable of another MLB request, another entry into
+        # ``persist_team_season``, or touching ``session`` at all.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
     return _finish_league_ingestion(
         session=session,

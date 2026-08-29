@@ -102,6 +102,10 @@ ingest_league_season_async
   completion order, not discovery order — documented on
   `ingest_league_season_async` — since that is the only order concurrent
   completions actually have.
+- **Task ownership is explicit.** Each team's coroutine is wrapped in its own
+  `asyncio.Task` up front, rather than left for `asyncio.gather` to wrap
+  internally, so the run can act on all of them if one fails unexpectedly.
+  See §5 for what that failure path guarantees.
 
 ## 4. Transaction boundaries
 
@@ -122,9 +126,15 @@ Unchanged from the sequential path:
 - a team's persistence failure (`TeamSeasonIngestionError`) is handled the
   same way, and rolls back only that team's own transaction;
 - an unexpected exception (anything else) propagates out of
-  `ingest_league_season_async` rather than being reported as a missing team;
-  `asyncio.run` cancels any other still-in-flight team coroutines as part of
-  its normal shutdown, so no orphaned fetch or write survives the error;
+  `ingest_league_season_async` rather than being reported as a missing team.
+  The team coroutines are owned as explicit `asyncio.Task`s; on an unexpected
+  exception — including one raised by `on_team_complete`, which is
+  intentionally never absorbed — every other team's task is cancelled and
+  awaited to completion before the exception is allowed to leave the
+  function, so no sibling task can still be mid-fetch, queued behind the
+  concurrency semaphore, or waiting on the write lock once the caller sees
+  the error. This does not depend on `asyncio.run`'s shutdown behavior, so it
+  holds even when the function is awaited inside a longer-lived event loop;
 - the coverage row is only ever recorded `COMPLETE` after the same validated
   `LeagueSeasonIngestionResult` the sequential path builds; a run that raises
   before that point leaves the row `RUNNING`;
