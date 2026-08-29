@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -22,6 +23,7 @@ from app.schemas.ingestion import (
     LeagueSeasonIngestionState,
     LeagueSeasonIngestionStatus,
 )
+from app.schemas.players import PlayerIdentity, PlayerSeasonHitting
 
 
 class TeamGameBattingLineRecord(Base):
@@ -449,3 +451,213 @@ class LeagueSeasonIngestionRecord(Base):
         record = LeagueSeasonIngestionRecord()
         record.apply_domain(state)
         return record
+
+
+class PlayerRecord(Base):
+    """Persistence representation of one player's identity.
+
+    ``player_id`` is the MLB person id and is the natural identity other
+    player tables reference, not the surrogate ``id`` primary key.
+    """
+
+    __tablename__ = "players"
+    __table_args__ = (
+        UniqueConstraint("player_id", name="uq_players_player_id"),
+        CheckConstraint("player_id > 0", name="player_id_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    player_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    full_name: Mapped[str] = mapped_column(String, nullable=False)
+    primary_position: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False
+    )
+
+    def to_domain(self) -> PlayerIdentity:
+        """Convert this row to the normalized Pydantic domain model."""
+        return PlayerIdentity(
+            player_id=self.player_id,
+            full_name=self.full_name,
+            primary_position=self.primary_position,
+        )
+
+    def apply_domain(self, identity: PlayerIdentity) -> None:
+        """Copy persisted identity fields from a domain record onto this row."""
+        self.full_name = identity.full_name
+        self.primary_position = identity.primary_position
+
+    @staticmethod
+    def from_domain(
+        identity: PlayerIdentity,
+        *,
+        created_at: datetime,
+        updated_at: datetime,
+    ) -> PlayerRecord:
+        """Build a new ORM row from a domain record and timestamps."""
+        return PlayerRecord(
+            player_id=identity.player_id,
+            full_name=identity.full_name,
+            primary_position=identity.primary_position,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+
+class PlayerSeasonHittingRecord(Base):
+    """Persistence representation of one player's full-season hitting aggregate.
+
+    Only raw counting stats are stored; batting average, OBP, SLG, OPS, and
+    total bases are calculated on demand rather than persisted. There is no
+    ``team_id`` column: this row represents the MLB full-season aggregate, not
+    a team stint, so a player traded mid-season still has exactly one row here.
+    """
+
+    __tablename__ = "player_season_hitting"
+    __table_args__ = (
+        UniqueConstraint(
+            "player_id", "season", name="uq_player_season_hitting_player_id_season"
+        ),
+        CheckConstraint("player_id > 0", name="player_id_positive"),
+        CheckConstraint("season > 0", name="season_positive"),
+        CheckConstraint("games_played >= 0", name="games_played_nonnegative"),
+        CheckConstraint("plate_appearances >= 0", name="plate_appearances_nonnegative"),
+        CheckConstraint("at_bats >= 0", name="at_bats_nonnegative"),
+        CheckConstraint("runs >= 0", name="runs_nonnegative"),
+        CheckConstraint("hits >= 0", name="hits_nonnegative"),
+        CheckConstraint("doubles >= 0", name="doubles_nonnegative"),
+        CheckConstraint("triples >= 0", name="triples_nonnegative"),
+        CheckConstraint("home_runs >= 0", name="home_runs_nonnegative"),
+        CheckConstraint("rbi >= 0", name="rbi_nonnegative"),
+        CheckConstraint("base_on_balls >= 0", name="base_on_balls_nonnegative"),
+        CheckConstraint("intentional_walks >= 0", name="intentional_walks_nonnegative"),
+        CheckConstraint("hit_by_pitch >= 0", name="hit_by_pitch_nonnegative"),
+        CheckConstraint("strikeouts >= 0", name="strikeouts_nonnegative"),
+        CheckConstraint("stolen_bases >= 0", name="stolen_bases_nonnegative"),
+        CheckConstraint("caught_stealing >= 0", name="caught_stealing_nonnegative"),
+        CheckConstraint("sac_flies >= 0", name="sac_flies_nonnegative"),
+        CheckConstraint("sac_bunts >= 0", name="sac_bunts_nonnegative"),
+        # Definitional, not empirical: an at-bat is a plate appearance, an
+        # extra-base hit is a hit, and an intentional walk is a walk.
+        # Spot-checked against real single-team, two-way, and traded-player
+        # seasons before being encoded here; see the Milestone 46 report.
+        CheckConstraint(
+            "at_bats <= plate_appearances", name="at_bats_within_plate_appearances"
+        ),
+        CheckConstraint(
+            "doubles + triples + home_runs <= hits",
+            name="extra_base_hits_within_hits",
+        ),
+        CheckConstraint(
+            "intentional_walks <= base_on_balls",
+            name="intentional_walks_within_base_on_balls",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    player_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("players.player_id"), nullable=False
+    )
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    games_played: Mapped[int] = mapped_column(Integer, nullable=False)
+    plate_appearances: Mapped[int] = mapped_column(Integer, nullable=False)
+    at_bats: Mapped[int] = mapped_column(Integer, nullable=False)
+    runs: Mapped[int] = mapped_column(Integer, nullable=False)
+    hits: Mapped[int] = mapped_column(Integer, nullable=False)
+    doubles: Mapped[int] = mapped_column(Integer, nullable=False)
+    triples: Mapped[int] = mapped_column(Integer, nullable=False)
+    home_runs: Mapped[int] = mapped_column(Integer, nullable=False)
+    rbi: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_on_balls: Mapped[int] = mapped_column(Integer, nullable=False)
+    intentional_walks: Mapped[int] = mapped_column(Integer, nullable=False)
+    hit_by_pitch: Mapped[int] = mapped_column(Integer, nullable=False)
+    strikeouts: Mapped[int] = mapped_column(Integer, nullable=False)
+    stolen_bases: Mapped[int] = mapped_column(Integer, nullable=False)
+    caught_stealing: Mapped[int] = mapped_column(Integer, nullable=False)
+    sac_flies: Mapped[int] = mapped_column(Integer, nullable=False)
+    sac_bunts: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False
+    )
+
+    def to_domain(self) -> PlayerSeasonHitting:
+        """Convert this row to the normalized Pydantic domain model."""
+        return PlayerSeasonHitting(
+            player_id=self.player_id,
+            season=self.season,
+            games_played=self.games_played,
+            plate_appearances=self.plate_appearances,
+            at_bats=self.at_bats,
+            runs=self.runs,
+            hits=self.hits,
+            doubles=self.doubles,
+            triples=self.triples,
+            home_runs=self.home_runs,
+            rbi=self.rbi,
+            base_on_balls=self.base_on_balls,
+            intentional_walks=self.intentional_walks,
+            hit_by_pitch=self.hit_by_pitch,
+            strikeouts=self.strikeouts,
+            stolen_bases=self.stolen_bases,
+            caught_stealing=self.caught_stealing,
+            sac_flies=self.sac_flies,
+            sac_bunts=self.sac_bunts,
+        )
+
+    def apply_domain(self, hitting: PlayerSeasonHitting) -> None:
+        """Copy persisted counting stats from a domain record onto this row."""
+        self.games_played = hitting.games_played
+        self.plate_appearances = hitting.plate_appearances
+        self.at_bats = hitting.at_bats
+        self.runs = hitting.runs
+        self.hits = hitting.hits
+        self.doubles = hitting.doubles
+        self.triples = hitting.triples
+        self.home_runs = hitting.home_runs
+        self.rbi = hitting.rbi
+        self.base_on_balls = hitting.base_on_balls
+        self.intentional_walks = hitting.intentional_walks
+        self.hit_by_pitch = hitting.hit_by_pitch
+        self.strikeouts = hitting.strikeouts
+        self.stolen_bases = hitting.stolen_bases
+        self.caught_stealing = hitting.caught_stealing
+        self.sac_flies = hitting.sac_flies
+        self.sac_bunts = hitting.sac_bunts
+
+    @staticmethod
+    def from_domain(
+        hitting: PlayerSeasonHitting,
+        *,
+        created_at: datetime,
+        updated_at: datetime,
+    ) -> PlayerSeasonHittingRecord:
+        """Build a new ORM row from a domain record and timestamps."""
+        return PlayerSeasonHittingRecord(
+            player_id=hitting.player_id,
+            season=hitting.season,
+            games_played=hitting.games_played,
+            plate_appearances=hitting.plate_appearances,
+            at_bats=hitting.at_bats,
+            runs=hitting.runs,
+            hits=hitting.hits,
+            doubles=hitting.doubles,
+            triples=hitting.triples,
+            home_runs=hitting.home_runs,
+            rbi=hitting.rbi,
+            base_on_balls=hitting.base_on_balls,
+            intentional_walks=hitting.intentional_walks,
+            hit_by_pitch=hitting.hit_by_pitch,
+            strikeouts=hitting.strikeouts,
+            stolen_bases=hitting.stolen_bases,
+            caught_stealing=hitting.caught_stealing,
+            sac_flies=hitting.sac_flies,
+            sac_bunts=hitting.sac_bunts,
+            created_at=created_at,
+            updated_at=updated_at,
+        )

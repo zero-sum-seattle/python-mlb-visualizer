@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.database.engine import build_engine
 from tests.conftest import run_alembic_downgrade_base, run_alembic_upgrade
 
-REVISION_HEAD = "27a202039134"
+REVISION_HEAD = "73d9fae8fafb"
 
 
 def database_url_for(path: Path) -> str:
@@ -902,3 +902,269 @@ def test_baserunners_revision_follows_the_league_revision() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     revision = script.get_revision(BASERUNNERS_REVISION)
     assert revision.down_revision == PRE_BASERUNNERS_REVISION
+
+
+# ---------------------------------------------------------------------------
+# Issue #46: players and player_season_hitting tables
+# ---------------------------------------------------------------------------
+
+PRE_PLAYERS_REVISION = "27a202039134"
+PLAYERS_REVISION = "73d9fae8fafb"
+
+PLAYER_HITTING_COLUMNS = {
+    "id",
+    "player_id",
+    "season",
+    "games_played",
+    "plate_appearances",
+    "at_bats",
+    "runs",
+    "hits",
+    "doubles",
+    "triples",
+    "home_runs",
+    "rbi",
+    "base_on_balls",
+    "intentional_walks",
+    "hit_by_pitch",
+    "strikeouts",
+    "stolen_bases",
+    "caught_stealing",
+    "sac_flies",
+    "sac_bunts",
+    "created_at",
+    "updated_at",
+}
+
+
+def test_pre_players_revision_has_no_player_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "pre_players.db"
+    run_alembic_upgrade_to(database_url_for(db_path), PRE_PLAYERS_REVISION)
+    engine = build_engine(database_url_for(db_path))
+    inspector = inspect(engine)
+    assert not inspector.has_table("players")
+    assert not inspector.has_table("player_season_hitting")
+    engine.dispose()
+
+
+def test_players_migration_creates_the_tables(migrated_db_path: Path) -> None:
+    engine = build_engine(database_url_for(migrated_db_path))
+    inspector = inspect(engine)
+    assert inspector.has_table("players")
+    assert inspector.has_table("player_season_hitting")
+    engine.dispose()
+
+
+def test_players_expected_columns_exist(migrated_db_path: Path) -> None:
+    engine = build_engine(database_url_for(migrated_db_path))
+    columns = {col["name"] for col in inspect(engine).get_columns("players")}
+    engine.dispose()
+    assert columns == {
+        "id",
+        "player_id",
+        "full_name",
+        "primary_position",
+        "created_at",
+        "updated_at",
+    }
+
+
+def test_player_season_hitting_expected_columns_exist(
+    migrated_db_path: Path,
+) -> None:
+    engine = build_engine(database_url_for(migrated_db_path))
+    columns = {
+        col["name"] for col in inspect(engine).get_columns("player_season_hitting")
+    }
+    engine.dispose()
+    assert columns == PLAYER_HITTING_COLUMNS
+
+
+def test_player_season_hitting_declares_a_foreign_key_to_players(
+    migrated_db_path: Path,
+) -> None:
+    engine = build_engine(database_url_for(migrated_db_path))
+    foreign_keys = inspect(engine).get_foreign_keys("player_season_hitting")
+    engine.dispose()
+    assert len(foreign_keys) == 1
+    assert foreign_keys[0]["referred_table"] == "players"
+    assert foreign_keys[0]["constrained_columns"] == ["player_id"]
+    assert foreign_keys[0]["referred_columns"] == ["player_id"]
+
+
+def test_unique_player_id_is_enforced(migrated_session: Session) -> None:
+    migrated_session.execute(
+        text(
+            """
+            INSERT INTO players (player_id, full_name, primary_position,
+                created_at, updated_at)
+            VALUES (677594, 'Julio Rodriguez', 'CF',
+                '2025-01-01 00:00:00', '2025-01-01 00:00:00')
+            """
+        )
+    )
+    migrated_session.commit()
+    with pytest.raises(IntegrityError):
+        migrated_session.execute(
+            text(
+                """
+                INSERT INTO players (player_id, full_name, primary_position,
+                    created_at, updated_at)
+                VALUES (677594, 'Someone Else', '1B',
+                    '2025-01-02 00:00:00', '2025-01-02 00:00:00')
+                """
+            )
+        )
+        migrated_session.commit()
+
+
+def test_negative_player_id_is_rejected(migrated_session: Session) -> None:
+    with pytest.raises(IntegrityError):
+        migrated_session.execute(
+            text(
+                """
+                INSERT INTO players (player_id, full_name, primary_position,
+                    created_at, updated_at)
+                VALUES (-1, 'Nobody', 'OF',
+                    '2025-01-01 00:00:00', '2025-01-01 00:00:00')
+                """
+            )
+        )
+        migrated_session.commit()
+
+
+PLAYER_SEASON_HITTING_INSERT_COLUMNS = (
+    "player_id, season, games_played, plate_appearances, at_bats, runs, hits, "
+    "doubles, triples, home_runs, rbi, base_on_balls, intentional_walks, "
+    "hit_by_pitch, strikeouts, stolen_bases, caught_stealing, sac_flies, "
+    "sac_bunts, created_at, updated_at"
+)
+
+VALID_PLAYER_SEASON_HITTING_VALUES = (
+    "677594, 2025, 150, 600, 500, 80, 150, 30, 3, 20, 90, 60, 5, 5, 100, 10, 3, "
+    "4, 2, '2025-01-01 00:00:00', '2025-01-01 00:00:00'"
+)
+
+
+@pytest.fixture
+def player_row_session(migrated_session: Session) -> Session:
+    """A migrated session with one player row already committed."""
+    migrated_session.execute(
+        text(
+            """
+            INSERT INTO players (player_id, full_name, primary_position,
+                created_at, updated_at)
+            VALUES (677594, 'Julio Rodriguez', 'CF',
+                '2025-01-01 00:00:00', '2025-01-01 00:00:00')
+            """
+        )
+    )
+    migrated_session.commit()
+    return migrated_session
+
+
+def test_valid_player_season_hitting_row_is_accepted(
+    player_row_session: Session,
+) -> None:
+    player_row_session.execute(
+        text(
+            f"""
+            INSERT INTO player_season_hitting ({PLAYER_SEASON_HITTING_INSERT_COLUMNS})
+            VALUES ({VALID_PLAYER_SEASON_HITTING_VALUES})
+            """
+        )
+    )
+    player_row_session.commit()
+
+
+def test_unique_player_id_season_is_enforced(player_row_session: Session) -> None:
+    player_row_session.execute(
+        text(
+            f"""
+            INSERT INTO player_season_hitting ({PLAYER_SEASON_HITTING_INSERT_COLUMNS})
+            VALUES ({VALID_PLAYER_SEASON_HITTING_VALUES})
+            """
+        )
+    )
+    player_row_session.commit()
+    with pytest.raises(IntegrityError):
+        player_row_session.execute(
+            text(
+                f"""
+                INSERT INTO player_season_hitting
+                    ({PLAYER_SEASON_HITTING_INSERT_COLUMNS})
+                VALUES ({VALID_PLAYER_SEASON_HITTING_VALUES})
+                """
+            )
+        )
+        player_row_session.commit()
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("at_bats", 700),  # at_bats > plate_appearances
+        ("doubles", 200),  # extra base hits > hits
+        ("intentional_walks", 200),  # IBB > BB
+        ("hits", -1),
+        ("stolen_bases", -1),
+    ],
+)
+def test_definitional_check_constraints_are_enforced(
+    player_row_session: Session, column: str, value: int
+) -> None:
+    columns = {
+        col: val
+        for col, val in zip(
+            PLAYER_SEASON_HITTING_INSERT_COLUMNS.split(", "),
+            VALID_PLAYER_SEASON_HITTING_VALUES.split(", "),
+            strict=True,
+        )
+    }
+    columns[column] = str(value)
+    values = ", ".join(columns.values())
+    with pytest.raises(IntegrityError):
+        player_row_session.execute(
+            text(
+                f"""
+                INSERT INTO player_season_hitting
+                    ({PLAYER_SEASON_HITTING_INSERT_COLUMNS})
+                VALUES ({values})
+                """
+            )
+        )
+        player_row_session.commit()
+
+
+def test_players_downgrade_removes_only_the_new_tables(
+    migrated_db_path: Path,
+) -> None:
+    url = database_url_for(migrated_db_path)
+    run_alembic_downgrade_to(url, PRE_PLAYERS_REVISION)
+    engine = build_engine(url)
+    inspector = inspect(engine)
+    assert not inspector.has_table("players")
+    assert not inspector.has_table("player_season_hitting")
+    assert inspector.has_table("team_game_batting_lines")
+    engine.dispose()
+
+
+def test_players_upgrade_downgrade_upgrade_round_trips(tmp_path: Path) -> None:
+    db_path = tmp_path / "players_roundtrip.db"
+    url = database_url_for(db_path)
+    run_alembic_upgrade(url)
+    run_alembic_downgrade_to(url, PRE_PLAYERS_REVISION)
+    run_alembic_upgrade(url)
+    engine = build_engine(url)
+    inspector = inspect(engine)
+    assert inspector.has_table("players")
+    assert inspector.has_table("player_season_hitting")
+    engine.dispose()
+
+
+def test_players_revision_follows_the_pitching_lines_revision() -> None:
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config("alembic.ini"))
+    revision = script.get_revision(PLAYERS_REVISION)
+    assert revision.down_revision == PRE_PLAYERS_REVISION

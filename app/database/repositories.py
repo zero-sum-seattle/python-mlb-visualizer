@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, aliased
 
 from app.database.models import (
     LeagueSeasonIngestionRecord,
+    PlayerRecord,
+    PlayerSeasonHittingRecord,
     TeamGameBattingLineRecord,
     TeamGamePitchingLineRecord,
 )
@@ -22,8 +24,10 @@ from app.schemas.games import (
 from app.schemas.ingestion import (
     LeagueSeasonIngestionState,
     LeagueSeasonIngestionStatus,
+    PlayerPersistenceOutcome,
     TeamGamePersistenceResult,
 )
+from app.schemas.players import PlayerIdentity, PlayerSeasonHitting
 
 # The two line tables the generic upsert below reconciles. They hold different
 # columns but expose the same to_domain / apply_domain / from_domain interface.
@@ -492,3 +496,94 @@ def _store_league_season_ingestion(
         session.add(LeagueSeasonIngestionRecord.from_domain(state))
         return
     record.apply_domain(state)
+
+
+def get_player(session: Session, *, player_id: int) -> PlayerIdentity | None:
+    """Return a player's stored identity, or None if never imported."""
+    record = _load_player(session, player_id)
+    return None if record is None else record.to_domain()
+
+
+def get_player_season_hitting(
+    session: Session,
+    *,
+    player_id: int,
+    season: int,
+) -> PlayerSeasonHitting | None:
+    """Return a player's stored season hitting aggregate, or None if not stored."""
+    record = _load_player_season_hitting(session, player_id=player_id, season=season)
+    return None if record is None else record.to_domain()
+
+
+def upsert_player(
+    session: Session,
+    *,
+    identity: PlayerIdentity,
+) -> PlayerPersistenceOutcome:
+    """Insert, update, or leave unchanged the one row for a player's identity.
+
+    Does not commit or roll back.
+    """
+    record = _load_player(session, identity.player_id)
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    if record is None:
+        session.add(PlayerRecord.from_domain(identity, created_at=now, updated_at=now))
+        return PlayerPersistenceOutcome.INSERTED
+
+    if record.to_domain() == identity:
+        return PlayerPersistenceOutcome.UNCHANGED
+
+    record.apply_domain(identity)
+    record.updated_at = now
+    return PlayerPersistenceOutcome.UPDATED
+
+
+def upsert_player_season_hitting(
+    session: Session,
+    *,
+    hitting: PlayerSeasonHitting,
+) -> PlayerPersistenceOutcome:
+    """Insert, update, or leave unchanged the one row for a player-season.
+
+    Does not commit or roll back.
+    """
+    record = _load_player_season_hitting(
+        session, player_id=hitting.player_id, season=hitting.season
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    if record is None:
+        session.add(
+            PlayerSeasonHittingRecord.from_domain(
+                hitting, created_at=now, updated_at=now
+            )
+        )
+        return PlayerPersistenceOutcome.INSERTED
+
+    if record.to_domain() == hitting:
+        return PlayerPersistenceOutcome.UNCHANGED
+
+    record.apply_domain(hitting)
+    record.updated_at = now
+    return PlayerPersistenceOutcome.UPDATED
+
+
+def _load_player(session: Session, player_id: int) -> PlayerRecord | None:
+    return session.scalars(
+        select(PlayerRecord).where(PlayerRecord.player_id == player_id)
+    ).one_or_none()
+
+
+def _load_player_season_hitting(
+    session: Session,
+    *,
+    player_id: int,
+    season: int,
+) -> PlayerSeasonHittingRecord | None:
+    return session.scalars(
+        select(PlayerSeasonHittingRecord).where(
+            PlayerSeasonHittingRecord.player_id == player_id,
+            PlayerSeasonHittingRecord.season == season,
+        )
+    ).one_or_none()
