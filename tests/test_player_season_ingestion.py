@@ -270,3 +270,96 @@ def test_mlb_retrieval_runs_before_transaction_opens(migrated_session: Session) 
     )
 
     assert fetch_order == ["get_person", "get_player_stats", "transaction_begin"]
+
+
+class ClosableFakeMlb(FakeMlb):
+    """A ``FakeMlb`` that also tracks whether it was used as a context manager."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.closed = False
+
+    def __enter__(self) -> "ClosableFakeMlb":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.closed = True
+
+
+def test_no_client_supplied_shares_one_owned_client_for_both_mlb_calls(
+    monkeypatch, migrated_session: Session
+) -> None:
+    """A missing ``client`` must open exactly one MLB client for the import.
+
+    Fails against the previous implementation, which passed ``client=None``
+    into ``get_player_identity`` and ``get_player_season_hitting``
+    independently, causing each to construct and close its own ``Mlb()``.
+    """
+    from app.services import player_season_ingestion as ingestion_module
+
+    owned = ClosableFakeMlb(person=make_person(), player_stats=MARINERS_STATS)
+    construction_count = 0
+
+    def fake_mlb_factory() -> ClosableFakeMlb:
+        nonlocal construction_count
+        construction_count += 1
+        return owned
+
+    monkeypatch.setattr(ingestion_module, "Mlb", fake_mlb_factory)
+
+    ingest_player_season(session=migrated_session, player_id=PLAYER_ID, season=SEASON)
+
+    assert construction_count == 1
+    assert owned.calls == ["get_person", "get_player_stats"]
+    assert owned.closed is True
+
+
+def test_supplied_client_is_reused_for_both_calls_and_never_closed(
+    migrated_session: Session,
+) -> None:
+    """A caller-supplied client must be reused for both MLB calls, never closed."""
+    client = ClosableFakeMlb(person=make_person(), player_stats=MARINERS_STATS)
+
+    ingest_player_season(
+        session=migrated_session,
+        player_id=PLAYER_ID,
+        season=SEASON,
+        client=client,
+    )
+
+    assert client.calls == ["get_person", "get_player_stats"]
+    assert client.closed is False
+
+
+def test_owned_client_closes_when_identity_lookup_fails(
+    monkeypatch, migrated_session: Session
+) -> None:
+    """The service-owned client must still close if identity retrieval fails."""
+    from app.services import player_season_ingestion as ingestion_module
+
+    owned = ClosableFakeMlb(person=None)
+    monkeypatch.setattr(ingestion_module, "Mlb", lambda: owned)
+
+    with pytest.raises(PlayerNotFoundError):
+        ingest_player_season(
+            session=migrated_session, player_id=PLAYER_ID, season=SEASON
+        )
+
+    assert owned.closed is True
+
+
+def test_owned_client_closes_when_season_hitting_lookup_fails(
+    monkeypatch, migrated_session: Session
+) -> None:
+    """The service-owned client must still close if season hitting retrieval fails."""
+    from app.services import player_season_ingestion as ingestion_module
+
+    owned = ClosableFakeMlb(person=make_person(), player_stats={})
+    monkeypatch.setattr(ingestion_module, "Mlb", lambda: owned)
+
+    with pytest.raises(NoHittingStatsError):
+        ingest_player_season(
+            session=migrated_session, player_id=PLAYER_ID, season=SEASON
+        )
+
+    assert owned.closed is True

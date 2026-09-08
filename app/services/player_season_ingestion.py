@@ -1,5 +1,6 @@
 """Atomic player-season hitting ingestion into the local database."""
 
+from mlbstatsapi import Mlb
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,33 @@ def ingest_player_season(
     client: MlbPlayerDataClient | None = None,
 ) -> PlayerSeasonIngestionResult:
     """Fetch one player-season of hitting stats from MLB, then persist it atomically.
+
+    Parameters
+    ----------
+    client:
+        An existing ``mlbstatsapi.Mlb`` client, reused for both the identity
+        and season hitting requests. When omitted, one client is created for
+        this logical import and closed afterwards, so a single import never
+        opens more than one MLB client.
+    """
+    if client is not None:
+        return _ingest_player_season(
+            session=session, player_id=player_id, season=season, client=client
+        )
+    with Mlb() as owned_client:
+        return _ingest_player_season(
+            session=session, player_id=player_id, season=season, client=owned_client
+        )
+
+
+def _ingest_player_season(
+    *,
+    session: Session,
+    player_id: int,
+    season: int,
+    client: MlbPlayerDataClient,
+) -> PlayerSeasonIngestionResult:
+    """Fetch one player-season from MLB with ``client``, then persist it atomically.
 
     Both MLB requests -- identity and season hitting -- complete before the
     database transaction begins. The player identity row and the player-season
