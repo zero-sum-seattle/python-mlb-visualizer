@@ -311,3 +311,29 @@ class LeagueSeasonIngestionState(BaseModel):
                 "COMPLETE coverage requires at least one team and no failures"
             )
         return self
+
+
+class PlayerPersistenceOutcome(StrEnum):
+    """What happened to one row during an upsert: inserted, updated, or unchanged."""
+
+    INSERTED = "INSERTED"
+    UPDATED = "UPDATED"
+    UNCHANGED = "UNCHANGED"
+
+
+class PlayerSeasonIngestionResult(BaseModel):
+    """Outcome of ingesting one player-season of hitting stats.
+
+    Team-season ingestion upserts a batch of many game rows, so its result
+    reports counts. Player-season ingestion always touches exactly one player
+    identity row and one player-season hitting row, so each gets a single
+    ``PlayerPersistenceOutcome`` instead.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    player_id: int = Field(gt=0)
+    season: int = Field(gt=0)
+    full_name: str = Field(min_length=1)
+    identity_outcome: PlayerPersistenceOutcome
+    hitting_outcome: PlayerPersistenceOutcome
