@@ -23,7 +23,11 @@ from app.schemas.ingestion import (
     LeagueSeasonIngestionState,
     LeagueSeasonIngestionStatus,
 )
-from app.schemas.players import PlayerIdentity, PlayerSeasonHitting
+from app.schemas.players import (
+    PlayerIdentity,
+    PlayerSeasonCatalogEntry,
+    PlayerSeasonHitting,
+)
 
 
 class TeamGameBattingLineRecord(Base):
@@ -504,6 +508,61 @@ class PlayerRecord(Base):
             primary_position=identity.primary_position,
             created_at=created_at,
             updated_at=updated_at,
+        )
+
+
+class PlayerSeasonCatalogRecord(Base):
+    """Persistence representation of season membership in MLB's player directory.
+
+    Identity attributes remain normalized in ``players``. This table stores
+    only the many-to-many fact needed for season-scoped discovery: MLB listed
+    this player for this Major League season.
+    """
+
+    __tablename__ = "player_seasons"
+    __table_args__ = (
+        UniqueConstraint(
+            "player_id", "season", name="uq_player_seasons_player_id_season"
+        ),
+        CheckConstraint("player_id > 0", name="player_id_positive"),
+        CheckConstraint("season > 0", name="season_positive"),
+        Index("ix_player_seasons_season_player_id", "season", "player_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    player_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("players.player_id"), nullable=False
+    )
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False
+    )
+
+    def to_domain(self, identity: PlayerIdentity) -> PlayerSeasonCatalogEntry:
+        """Combine this membership with its normalized player identity."""
+        if identity.player_id != self.player_id:
+            raise ValueError(
+                f"identity player {identity.player_id} does not match catalog "
+                f"player {self.player_id}"
+            )
+        return PlayerSeasonCatalogEntry(
+            player_id=identity.player_id,
+            full_name=identity.full_name,
+            primary_position=identity.primary_position,
+            season=self.season,
+        )
+
+    @staticmethod
+    def from_domain(
+        entry: PlayerSeasonCatalogEntry,
+        *,
+        created_at: datetime,
+    ) -> PlayerSeasonCatalogRecord:
+        """Build a new immutable season-membership row."""
+        return PlayerSeasonCatalogRecord(
+            player_id=entry.player_id,
+            season=entry.season,
+            created_at=created_at,
         )
 
 

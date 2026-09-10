@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.database.engine import build_engine
 from tests.conftest import run_alembic_downgrade_base, run_alembic_upgrade
 
-REVISION_HEAD = "73d9fae8fafb"
+REVISION_HEAD = "8b3f31d9a5c2"
 
 
 def database_url_for(path: Path) -> str:
@@ -1168,3 +1168,139 @@ def test_players_revision_follows_the_pitching_lines_revision() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     revision = script.get_revision(PLAYERS_REVISION)
     assert revision.down_revision == PRE_PLAYERS_REVISION
+
+
+# ---------------------------------------------------------------------------
+# M6 Player discovery: player_seasons catalog membership
+# ---------------------------------------------------------------------------
+
+PRE_PLAYER_CATALOG_REVISION = PLAYERS_REVISION
+PLAYER_CATALOG_REVISION = REVISION_HEAD
+
+
+def _insert_pre_catalog_player_and_hitting(database_url: str) -> None:
+    run_alembic_upgrade_to(database_url, PRE_PLAYER_CATALOG_REVISION)
+    connection = sqlite3.connect(database_url.removeprefix("sqlite:///"))
+    connection.execute(
+        """
+        INSERT INTO players (
+            player_id, full_name, primary_position, created_at, updated_at
+        ) VALUES (
+            677594, 'Julio Rodríguez', 'CF',
+            '2026-08-28 12:00:00', '2026-08-28 12:00:00'
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        INSERT INTO player_season_hitting ({PLAYER_SEASON_HITTING_INSERT_COLUMNS})
+        VALUES ({VALID_PLAYER_SEASON_HITTING_VALUES})
+        """
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_player_catalog_migration_creates_expected_table_and_index(
+    migrated_db_path: Path,
+) -> None:
+    engine = build_engine(database_url_for(migrated_db_path))
+    inspector = inspect(engine)
+    assert {column["name"] for column in inspector.get_columns("player_seasons")} == {
+        "id",
+        "player_id",
+        "season",
+        "created_at",
+    }
+    assert {index["name"] for index in inspector.get_indexes("player_seasons")} == {
+        "ix_player_seasons_season_player_id"
+    }
+    engine.dispose()
+
+
+def test_player_catalog_membership_has_player_foreign_key(
+    migrated_db_path: Path,
+) -> None:
+    engine = build_engine(database_url_for(migrated_db_path))
+    foreign_keys = inspect(engine).get_foreign_keys("player_seasons")
+    engine.dispose()
+    assert len(foreign_keys) == 1
+    assert foreign_keys[0]["referred_table"] == "players"
+    assert foreign_keys[0]["constrained_columns"] == ["player_id"]
+    assert foreign_keys[0]["referred_columns"] == ["player_id"]
+
+
+def test_player_catalog_membership_is_unique_and_positive(
+    player_row_session: Session,
+) -> None:
+    values = "677594, 2025, '2026-09-09 00:00:00'"
+    player_row_session.execute(
+        text(
+            "INSERT INTO player_seasons (player_id, season, created_at) "
+            f"VALUES ({values})"
+        )
+    )
+    player_row_session.commit()
+    with pytest.raises(IntegrityError):
+        player_row_session.execute(
+            text(
+                "INSERT INTO player_seasons (player_id, season, created_at) "
+                f"VALUES ({values})"
+            )
+        )
+        player_row_session.commit()
+
+    player_row_session.rollback()
+    with pytest.raises(IntegrityError):
+        player_row_session.execute(
+            text(
+                "INSERT INTO player_seasons (player_id, season, created_at) "
+                "VALUES (677594, 0, '2026-09-09 00:00:00')"
+            )
+        )
+        player_row_session.commit()
+
+
+def test_player_catalog_upgrade_backfills_existing_hitting_membership(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "pre_catalog.db"
+    url = database_url_for(db_path)
+    _insert_pre_catalog_player_and_hitting(url)
+    run_alembic_upgrade(url)
+    connection = sqlite3.connect(db_path)
+    rows = connection.execute(
+        "SELECT player_id, season, created_at FROM player_seasons"
+    ).fetchall()
+    connection.close()
+    assert rows == [(677594, 2025, "2025-01-01 00:00:00")]
+
+
+def test_player_catalog_downgrade_preserves_player_and_hitting_rows(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "catalog_downgrade.db"
+    url = database_url_for(db_path)
+    _insert_pre_catalog_player_and_hitting(url)
+    run_alembic_upgrade(url)
+    run_alembic_downgrade_to(url, PRE_PLAYER_CATALOG_REVISION)
+    engine = build_engine(url)
+    inspector = inspect(engine)
+    assert not inspector.has_table("player_seasons")
+    assert inspector.has_table("players")
+    assert inspector.has_table("player_season_hitting")
+    engine.dispose()
+    connection = sqlite3.connect(db_path)
+    assert connection.execute("SELECT count(*) FROM players").fetchone() == (1,)
+    assert connection.execute(
+        "SELECT count(*) FROM player_season_hitting"
+    ).fetchone() == (1,)
+    connection.close()
+
+
+def test_player_catalog_revision_follows_players_revision() -> None:
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config("alembic.ini"))
+    revision = script.get_revision(PLAYER_CATALOG_REVISION)
+    assert revision.down_revision == PRE_PLAYER_CATALOG_REVISION

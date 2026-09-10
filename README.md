@@ -27,7 +27,9 @@ Normal browser requests do **not** call the MLB Stats API.
 - Offline deterministic test suite and GitHub Actions CI
 
 Player visualizations, additional team metrics, multi-season overlays, and a more
-organized Team/Player UI are planned but not implemented yet.
+organized Team/Player UI are planned but not implemented yet. A season-level
+Player catalog can be imported for future DB-only search and selection; see
+[Player season catalog](docs/player-season-catalog.md).
 
 ## Screenshots
 
@@ -111,6 +113,18 @@ Import an entire MLB season:
 ```bash
 poetry run python scripts/import_league_season.py --season 2025
 ```
+
+Import the MLB player directory for a season, then import hitting data for an
+individual player as needed:
+
+```bash
+poetry run python scripts/import_player_catalog.py --season 2025
+poetry run python scripts/import_player_season.py --player-id 677594 --season 2025
+```
+
+The Player catalog is one bulk request. It stores identities and season
+memberships for future DB-only search; it does not fetch statistics for every
+discovered player.
 
 League imports record whether every discovered team was refreshed successfully.
 MLB-wide comparison statistics are only presented when the persisted coverage

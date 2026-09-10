@@ -3,7 +3,11 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.players import PlayerIdentity, PlayerSeasonHitting
+from app.schemas.players import (
+    PlayerIdentity,
+    PlayerSeasonCatalogEntry,
+    PlayerSeasonHitting,
+)
 
 PLAYER_ID = 677594
 SEASON = 2025
@@ -43,6 +47,26 @@ def make_hitting(**overrides: object) -> PlayerSeasonHitting:
     }
     base.update(overrides)
     return PlayerSeasonHitting(**base)
+
+
+def test_catalog_entry_preserves_identity_and_adds_season() -> None:
+    entry = PlayerSeasonCatalogEntry(
+        player_id=677594,
+        full_name="Julio Rodríguez",
+        primary_position="CF",
+        season=2025,
+    )
+    assert entry.to_identity() == make_identity(full_name="Julio Rodríguez")
+
+
+def test_catalog_entry_requires_positive_season() -> None:
+    with pytest.raises(ValidationError):
+        PlayerSeasonCatalogEntry(
+            player_id=677594,
+            full_name="Julio Rodríguez",
+            primary_position="CF",
+            season=0,
+        )
 
 
 def test_valid_identity_is_accepted() -> None:

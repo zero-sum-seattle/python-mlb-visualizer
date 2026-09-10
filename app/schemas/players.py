@@ -22,6 +22,27 @@ class PlayerIdentity(BaseModel):
     )
 
 
+class PlayerSeasonCatalogEntry(PlayerIdentity):
+    """One MLB player identity associated with one season's player directory.
+
+    The season scopes membership, not the identity fields. MLB's historical
+    ``get_people`` responses return current biographical details for a person,
+    so ``full_name`` and ``primary_position`` continue to live on the global
+    player identity while this model adds the season in which MLB listed that
+    person as a Major League player.
+    """
+
+    season: int = Field(gt=0, description="MLB season directory membership.")
+
+    def to_identity(self) -> PlayerIdentity:
+        """Return the global identity portion used by ``players`` persistence."""
+        return PlayerIdentity(
+            player_id=self.player_id,
+            full_name=self.full_name,
+            primary_position=self.primary_position,
+        )
+
+
 class PlayerSeasonHitting(BaseModel):
     """One player's raw hitting counting stats for one MLB season.
 

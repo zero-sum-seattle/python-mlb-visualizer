@@ -337,3 +337,31 @@ class PlayerSeasonIngestionResult(BaseModel):
     full_name: str = Field(min_length=1)
     identity_outcome: PlayerPersistenceOutcome
     hitting_outcome: PlayerPersistenceOutcome
+
+
+class PlayerCatalogIngestionResult(BaseModel):
+    """Outcome of refreshing one season's MLB player directory.
+
+    Counts describe logical catalog entries. ``INSERTED`` means a new
+    ``(player_id, season)`` membership was stored. ``UPDATED`` means that
+    membership already existed but MLB supplied changed global identity data.
+    ``UNCHANGED`` means both membership and identity already matched.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    season: int = Field(gt=0)
+    players_discovered: int = Field(ge=1)
+    inserted: int = Field(ge=0)
+    updated: int = Field(ge=0)
+    unchanged: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _discovered_matches_counts(self) -> PlayerCatalogIngestionResult:
+        total = self.inserted + self.updated + self.unchanged
+        if self.players_discovered != total:
+            raise ValueError(
+                f"players_discovered ({self.players_discovered}) must equal "
+                f"inserted + updated + unchanged ({total})"
+            )
+        return self

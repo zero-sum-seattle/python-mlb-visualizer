@@ -1,4 +1,4 @@
-"""Retrieve and normalize player identity and season hitting stats from MLB.
+"""Retrieve and normalize player identity, discovery, and hitting data from MLB.
 
 Identity comes from ``Mlb.get_person``, which returns exactly one biographical
 record per player id or ``None`` if the id is not a known MLB person.
@@ -21,7 +21,13 @@ from mlbstatsapi.models.people.people import Person
 from mlbstatsapi.models.stats import HittingSeason
 from pydantic import ValidationError
 
-from app.schemas.players import PlayerIdentity, PlayerSeasonHitting
+from app.schemas.players import (
+    PlayerIdentity,
+    PlayerSeasonCatalogEntry,
+    PlayerSeasonHitting,
+)
+
+MLB_SPORT_ID = 1
 
 HITTING_STAT_GROUP = "hitting"
 SEASON_STAT_TYPE = "season"
@@ -43,6 +49,10 @@ class NoHittingStatsError(PlayerDataError):
     """The player has no season hitting stats for the requested season."""
 
 
+class NoPlayersDiscoveredError(PlayerDataError):
+    """MLB returned no players for the requested Major League season."""
+
+
 class MlbPlayerDataClient(Protocol):
     """The subset of ``mlbstatsapi.Mlb`` this service depends on."""
 
@@ -55,6 +65,94 @@ class MlbPlayerDataClient(Protocol):
         groups: list[str],
         **params: object,
     ) -> dict: ...
+
+
+class MlbPlayerDirectoryClient(Protocol):
+    """The subset of ``mlbstatsapi.Mlb`` season discovery depends on."""
+
+    def get_people(self, sport_id: int = ..., **params: object) -> list[Person]: ...
+
+
+def discover_mlb_players(
+    season: int,
+    *,
+    client: MlbPlayerDirectoryClient | None = None,
+) -> list[PlayerSeasonCatalogEntry]:
+    """Return the players MLB lists for one Major League season.
+
+    ``season`` scopes directory membership. The Person payload's biographical
+    fields are current identity data even for historical seasons, so this
+    function does not represent the name or primary position as historical.
+
+    Entries are sorted by case-insensitive full name then player id for stable
+    operator output and persistence behavior.
+    """
+    if client is not None:
+        return _discover_mlb_players(client, season)
+    with Mlb() as owned_client:
+        return _discover_mlb_players(owned_client, season)
+
+
+def _discover_mlb_players(
+    client: MlbPlayerDirectoryClient,
+    season: int,
+) -> list[PlayerSeasonCatalogEntry]:
+    try:
+        people = client.get_people(sport_id=MLB_SPORT_ID, season=season)
+    except TheMlbStatsApiException as exc:
+        raise PlayerDataError(
+            f"Unable to retrieve the MLB player directory for {season}"
+        ) from exc
+
+    if not people:
+        raise NoPlayersDiscoveredError(f"MLB returned no players for {season}")
+
+    entries: list[PlayerSeasonCatalogEntry] = []
+    seen: dict[int, str | None] = {}
+    for person in people:
+        known_name = seen.get(person.id)
+        if person.id in seen:
+            names = (
+                f"twice as {known_name!r}"
+                if known_name == person.full_name
+                else f"as both {known_name!r} and {person.full_name!r}"
+            )
+            raise PlayerDataError(
+                f"MLB returned player {person.id} more than once for {season} ({names})"
+            )
+        seen[person.id] = person.full_name
+
+        if person.is_player is not True:
+            raise PlayerDataError(
+                f"MLB person {person.id} returned for {season} is not marked "
+                "as a player"
+            )
+        identity = _normalize_player_identity(
+            person,
+            context=f"player {person.id} in the {season} MLB player directory",
+        )
+        try:
+            entries.append(
+                PlayerSeasonCatalogEntry(
+                    player_id=identity.player_id,
+                    full_name=identity.full_name,
+                    primary_position=identity.primary_position,
+                    season=season,
+                )
+            )
+        except ValidationError as exc:
+            raise PlayerDataError(
+                f"Could not normalize player {person.id} for {season}: {exc}"
+            ) from exc
+
+    return sorted(
+        entries,
+        key=lambda entry: (
+            entry.full_name.casefold(),
+            entry.full_name,
+            entry.player_id,
+        ),
+    )
 
 
 def get_player_identity(
@@ -99,10 +197,15 @@ def _fetch_player_identity(
         raise PlayerDataError(
             f"MLB returned person id {person.id} for requested player {player_id}"
         )
+    return _normalize_player_identity(person, context=f"player {player_id}")
+
+
+def _normalize_player_identity(person: Person, *, context: str) -> PlayerIdentity:
+    """Normalize identity fields shared by direct lookup and bulk discovery."""
     if not person.full_name:
-        raise PlayerDataError(f"No full name returned for player {player_id}")
+        raise PlayerDataError(f"No full name returned for {context}")
     if person.primary_position is None:
-        raise PlayerDataError(f"No primary position returned for player {player_id}")
+        raise PlayerDataError(f"No primary position returned for {context}")
 
     try:
         return PlayerIdentity(
@@ -112,7 +215,7 @@ def _fetch_player_identity(
         )
     except ValidationError as exc:
         raise PlayerDataError(
-            f"Could not normalize identity for player {player_id}: {exc}"
+            f"Could not normalize identity for {context}: {exc}"
         ) from exc
 
 
