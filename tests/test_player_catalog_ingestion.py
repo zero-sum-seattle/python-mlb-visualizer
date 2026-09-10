@@ -15,6 +15,7 @@ from app.database.models import (
 )
 from app.database.repositories import list_player_catalog
 from app.schemas.ingestion import PlayerPersistenceOutcome
+from app.schemas.players import PlayerSeasonCatalogEntry
 from app.services.player_catalog_ingestion import (
     PlayerCatalogIngestionError,
     ingest_player_catalog,
@@ -159,17 +160,31 @@ def test_stored_catalog_reads_back_in_discovery_order(
 
 
 def test_database_failure_rolls_back_entire_catalog(migrated_session: Session) -> None:
-    outcomes = [PlayerPersistenceOutcome.INSERTED, SQLAlchemyError("db failed")]
+    from app.services import player_catalog_ingestion as ingestion_module
+
+    real_upsert = ingestion_module.upsert_player_catalog_entry
+    calls = 0
+
+    def fail_after_first_write(
+        session: Session, *, entry: PlayerSeasonCatalogEntry
+    ) -> PlayerPersistenceOutcome:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise SQLAlchemyError("db failed")
+        return real_upsert(session, entry=entry)
+
     with (
         patch(
             "app.services.player_catalog_ingestion.upsert_player_catalog_entry",
-            side_effect=outcomes,
+            side_effect=fail_after_first_write,
         ),
         pytest.raises(PlayerCatalogIngestionError),
     ):
         ingest_player_catalog(
             session=migrated_session, season=SEASON, client=make_client()
         )
+    assert calls == 2
     assert migrated_session.scalar(select(func.count()).select_from(PlayerRecord)) == 0
     assert (
         migrated_session.scalar(

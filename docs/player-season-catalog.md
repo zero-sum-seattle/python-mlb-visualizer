@@ -32,12 +32,15 @@ method returns an empty list for a 4xx response, so this application treats an
 empty directory as an explicit discovery failure rather than a valid empty MLB
 season.
 
-Live audit on 2026-09-09 used one shared `Mlb()` client for all calls:
+The initial live audit on 2026-09-09 used one shared `Mlb()` client for all of
+its calls. A follow-up audit on 2026-09-10 added the 2022 evidence from one bulk
+request through a real shared `Mlb()` client:
 
 | Request | People | Unique ids | Missing names | Missing positions |
 | --- | ---: | ---: | ---: | ---: |
 | `season=2025` | 1,470 | 1,470 | 0 | 0 |
 | `season=2024` | 1,454 | 1,454 | 0 | 0 |
+| `season=2022` | 1,495 | 1,495 | 0 | 0 |
 | `season=2001` | 1,220 | 1,220 | 0 | 0 |
 | `season=2026` | 1,449 | 1,449 | 0 | 0 |
 
@@ -57,6 +60,27 @@ as the current MLB identity attributes already modeled by `players`.
 Exact counts are audit evidence, not application invariants. In-progress
 seasons grow as players debut, and upstream corrections may change historical
 responses.
+
+### Juan Soto 2022
+
+A follow-up live audit on 2026-09-10 reused one real `Mlb()` client and inspected
+the single bulk `season=2022` response. MLB player id `665742` appeared exactly
+once, as `Juan Soto` with primary-position abbreviation `LF`. The directory did
+not return one copy for each of his 2022 team stints. This supports the catalog's
+season-level Player membership grain; it does not support adding team-stint
+persistence.
+
+### Two-way player
+
+The same 2022 response represented MLB player id `660271` as `Shohei Ohtani`
+with primary-position abbreviation `TWP`. Searching the complete response for
+`primary_position.abbreviation == "TWP"` found one player: Ohtani. The catalog
+therefore preserves `TWP` literally, as it does every MLB position
+abbreviation, without translating it to `P`, `DH`, or another value.
+
+Like the other identity values in this historical directory,
+`primary_position` is treated as a current MLB identity attribute in `players`,
+not as a historically accurate position for the `player_seasons` membership.
 
 ## Ingestion behavior
 
