@@ -87,6 +87,24 @@ player-season relationship.
 There is no async catalog path. Discovery is already one bulk request, so
 concurrency would add no useful work and no second client lifecycle is needed.
 
+## Name ordering
+
+Both the discovered directory and the persisted catalog are returned in
+`PlayerIdentity.name_sort_key` order. Neither default ordering is usable for a
+player list: SQLite's default collation compares raw bytes, so `aaron Judge`
+sorts after `Zack Wheeler`, and Python's `casefold` lowers case without folding
+accents, so `Ángel Martínez` sorts after every unaccented name. MLB rosters
+contain many accented names, so the key decomposes the name with NFKD, drops
+combining marks, and folds case, falling back to the raw name and then the
+player id so the order is total.
+
+Ordering therefore lives in the domain layer rather than in an `ORDER BY`
+clause. The practical consequence is that discovery output and a catalog read
+can be compared directly, which is what makes rerun behavior checkable. A
+future player selector inherits the same order without restating the rule. This
+is not full locale-aware collation; adding ICU was rejected as a dependency the
+application does not otherwise need.
+
 ## Scope boundary
 
 This foundation adds no Player UI, search route, charts, player game logs,

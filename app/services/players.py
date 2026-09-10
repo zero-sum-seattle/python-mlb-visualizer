@@ -84,8 +84,9 @@ def discover_mlb_players(
     fields are current identity data even for historical seasons, so this
     function does not represent the name or primary position as historical.
 
-    Entries are sorted by case-insensitive full name then player id for stable
-    operator output and persistence behavior.
+    Entries are returned in ``PlayerIdentity.name_sort_key`` order, the same
+    order the persisted catalog reads back in, so a discovered directory and a
+    stored one can be compared directly.
     """
     if client is not None:
         return _discover_mlb_players(client, season)
@@ -145,14 +146,7 @@ def _discover_mlb_players(
                 f"Could not normalize player {person.id} for {season}: {exc}"
             ) from exc
 
-    return sorted(
-        entries,
-        key=lambda entry: (
-            entry.full_name.casefold(),
-            entry.full_name,
-            entry.player_id,
-        ),
-    )
+    return sorted(entries, key=PlayerSeasonCatalogEntry.name_sort_key)
 
 
 def get_player_identity(

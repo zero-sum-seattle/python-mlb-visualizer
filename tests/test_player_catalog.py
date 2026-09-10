@@ -80,7 +80,25 @@ def test_discovery_returns_stable_name_then_id_order() -> None:
 
     discovered = discover_mlb_players(SEASON, client=client)
 
-    assert [entry.player_id for entry in discovered] == [1, 3, 2]
+    assert [entry.player_id for entry in discovered] == [2, 1, 3]
+
+
+def test_discovery_sorts_accented_names_with_their_unaccented_letter() -> None:
+    client = FakeDirectory(
+        [
+            make_person(1, "Zack Wheeler", PITCHER),
+            make_person(2, "Ángel Martínez", CF),
+            make_person(3, "aaron Judge", CF),
+        ]
+    )
+
+    discovered = discover_mlb_players(SEASON, client=client)
+
+    assert [entry.full_name for entry in discovered] == [
+        "aaron Judge",
+        "Ángel Martínez",
+        "Zack Wheeler",
+    ]
 
 
 def test_empty_directory_is_an_explicit_discovery_failure() -> None:

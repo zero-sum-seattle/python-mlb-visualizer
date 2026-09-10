@@ -512,7 +512,12 @@ def get_player(session: Session, *, player_id: int) -> PlayerIdentity | None:
 def list_player_catalog(
     session: Session, *, season: int
 ) -> list[PlayerSeasonCatalogEntry]:
-    """Return the locally stored MLB player directory for one season."""
+    """Return the locally stored MLB player directory for one season, by name.
+
+    Ordering is applied to the domain entries rather than in SQL because the
+    database's default collation sorts accented names after every unaccented
+    one; see ``PlayerIdentity.name_sort_key``.
+    """
     stmt = (
         select(PlayerSeasonCatalogRecord, PlayerRecord)
         .join(
@@ -520,10 +525,10 @@ def list_player_catalog(
             PlayerRecord.player_id == PlayerSeasonCatalogRecord.player_id,
         )
         .where(PlayerSeasonCatalogRecord.season == season)
-        .order_by(PlayerRecord.full_name, PlayerRecord.player_id)
     )
     rows = session.execute(stmt).all()
-    return [membership.to_domain(player.to_domain()) for membership, player in rows]
+    entries = [membership.to_domain(player.to_domain()) for membership, player in rows]
+    return sorted(entries, key=PlayerSeasonCatalogEntry.name_sort_key)
 
 
 def get_player_season_hitting(

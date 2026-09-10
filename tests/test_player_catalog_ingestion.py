@@ -19,6 +19,7 @@ from app.services.player_catalog_ingestion import (
     PlayerCatalogIngestionError,
     ingest_player_catalog,
 )
+from app.services.players import discover_mlb_players
 
 SEASON = 2025
 CF = Position(code="8", name="Outfielder", type="Outfielder", abbreviation="CF")
@@ -137,6 +138,24 @@ def test_same_player_in_another_season_gets_a_second_membership(
         )
         == 2
     )
+
+
+def test_stored_catalog_reads_back_in_discovery_order(
+    migrated_session: Session,
+) -> None:
+    """Discovery and the persisted read must agree on one order, including accents."""
+    client = FakeDirectory(
+        [
+            make_person(1, "Zack Wheeler", PITCHER),
+            make_person(2, "Ángel Martínez", CF),
+            make_person(3, "aaron Judge", CF),
+        ]
+    )
+    discovered = discover_mlb_players(SEASON, client=client)
+
+    ingest_player_catalog(session=migrated_session, season=SEASON, client=client)
+
+    assert list_player_catalog(migrated_session, season=SEASON) == discovered
 
 
 def test_database_failure_rolls_back_entire_catalog(migrated_session: Session) -> None:

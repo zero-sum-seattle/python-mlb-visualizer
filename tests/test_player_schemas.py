@@ -59,6 +59,29 @@ def test_catalog_entry_preserves_identity_and_adds_season() -> None:
     assert entry.to_identity() == make_identity(full_name="Julio Rodríguez")
 
 
+def test_name_sort_key_folds_case_and_accents() -> None:
+    folded, original, player_id = make_identity(
+        full_name="Ángel Martínez"
+    ).name_sort_key()
+    assert folded == "angel martinez"
+    assert original == "Ángel Martínez"
+    assert player_id == PLAYER_ID
+
+
+def test_name_sort_key_breaks_folded_ties_by_name_then_id() -> None:
+    names = [
+        make_identity(player_id=2, full_name="zoë"),
+        make_identity(player_id=1, full_name="zoë"),
+        make_identity(player_id=9, full_name="Zoë"),
+    ]
+    ordered = sorted(names, key=PlayerIdentity.name_sort_key)
+    assert [(one.full_name, one.player_id) for one in ordered] == [
+        ("Zoë", 9),
+        ("zoë", 1),
+        ("zoë", 2),
+    ]
+
+
 def test_catalog_entry_requires_positive_season() -> None:
     with pytest.raises(ValidationError):
         PlayerSeasonCatalogEntry(

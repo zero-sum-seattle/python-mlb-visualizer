@@ -77,3 +77,20 @@ def test_catalog_is_season_scoped_and_sorted(migrated_session: Session) -> None:
         entries[0],
     ]
     assert list_player_catalog(migrated_session, season=1900) == []
+
+
+def test_catalog_ordering_ignores_case_and_accents(migrated_session: Session) -> None:
+    """The stored directory reads back in name order, not database byte order."""
+    for catalog_entry in [
+        entry(1, "Zack Wheeler", "P"),
+        entry(2, "Ángel Martínez", "2B"),
+        entry(3, "aaron Judge", "RF"),
+    ]:
+        upsert_player_catalog_entry(migrated_session, entry=catalog_entry)
+    migrated_session.commit()
+    listed = list_player_catalog(migrated_session, season=2025)
+    assert [stored.full_name for stored in listed] == [
+        "aaron Judge",
+        "Ángel Martínez",
+        "Zack Wheeler",
+    ]
