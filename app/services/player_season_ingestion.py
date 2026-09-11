@@ -4,7 +4,11 @@ from mlbstatsapi import Mlb
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.database.repositories import upsert_player, upsert_player_season_hitting
+from app.database.repositories import (
+    ensure_player_season_catalog_membership,
+    upsert_player,
+    upsert_player_season_hitting,
+)
 from app.schemas.ingestion import PlayerSeasonIngestionResult
 from app.services.players import (
     MlbPlayerDataClient,
@@ -65,6 +69,9 @@ def _ingest_player_season(
     try:
         with session.begin():
             identity_outcome = upsert_player(session, identity=identity)
+            ensure_player_season_catalog_membership(
+                session, identity=identity, season=season
+            )
             hitting_outcome = upsert_player_season_hitting(session, hitting=hitting)
     except SQLAlchemyError as exc:
         raise PlayerSeasonIngestionError(

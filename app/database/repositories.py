@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, aliased
 from app.database.models import (
     LeagueSeasonIngestionRecord,
     PlayerRecord,
+    PlayerSeasonCatalogRecord,
     PlayerSeasonHittingRecord,
     TeamGameBattingLineRecord,
     TeamGamePitchingLineRecord,
@@ -27,7 +28,11 @@ from app.schemas.ingestion import (
     PlayerPersistenceOutcome,
     TeamGamePersistenceResult,
 )
-from app.schemas.players import PlayerIdentity, PlayerSeasonHitting
+from app.schemas.players import (
+    PlayerIdentity,
+    PlayerSeasonCatalogEntry,
+    PlayerSeasonHitting,
+)
 
 # The two line tables the generic upsert below reconciles. They hold different
 # columns but expose the same to_domain / apply_domain / from_domain interface.
@@ -504,6 +509,28 @@ def get_player(session: Session, *, player_id: int) -> PlayerIdentity | None:
     return None if record is None else record.to_domain()
 
 
+def list_player_catalog(
+    session: Session, *, season: int
+) -> list[PlayerSeasonCatalogEntry]:
+    """Return the locally stored MLB player directory for one season, by name.
+
+    Ordering is applied to the domain entries rather than in SQL because the
+    database's default collation sorts accented names after every unaccented
+    one; see ``PlayerIdentity.name_sort_key``.
+    """
+    stmt = (
+        select(PlayerSeasonCatalogRecord, PlayerRecord)
+        .join(
+            PlayerRecord,
+            PlayerRecord.player_id == PlayerSeasonCatalogRecord.player_id,
+        )
+        .where(PlayerSeasonCatalogRecord.season == season)
+    )
+    rows = session.execute(stmt).all()
+    entries = [membership.to_domain(player.to_domain()) for membership, player in rows]
+    return sorted(entries, key=PlayerSeasonCatalogEntry.name_sort_key)
+
+
 def get_player_season_hitting(
     session: Session,
     *,
@@ -539,6 +566,55 @@ def upsert_player(
     return PlayerPersistenceOutcome.UPDATED
 
 
+def upsert_player_catalog_entry(
+    session: Session,
+    *,
+    entry: PlayerSeasonCatalogEntry,
+) -> PlayerPersistenceOutcome:
+    """Upsert one logical catalog entry without committing or rolling back.
+
+    Identity is normalized into ``players`` and season membership into
+    ``player_seasons``. The returned outcome describes the logical catalog
+    entry rather than either physical row in isolation.
+    """
+    identity_outcome = upsert_player(session, identity=entry.to_identity())
+    membership = _load_player_season_catalog(
+        session, player_id=entry.player_id, season=entry.season
+    )
+    if membership is None:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(PlayerSeasonCatalogRecord.from_domain(entry, created_at=now))
+        return PlayerPersistenceOutcome.INSERTED
+    return identity_outcome
+
+
+def ensure_player_season_catalog_membership(
+    session: Session,
+    *,
+    identity: PlayerIdentity,
+    season: int,
+) -> None:
+    """Ensure a known player-season import is represented in the catalog.
+
+    The caller remains responsible for persisting ``identity`` itself. This
+    focused helper exists so the one-player ingestion path can maintain the
+    membership invariant without changing what its identity outcome reports.
+    """
+    existing = _load_player_season_catalog(
+        session, player_id=identity.player_id, season=season
+    )
+    if existing is not None:
+        return
+    entry = PlayerSeasonCatalogEntry(
+        player_id=identity.player_id,
+        full_name=identity.full_name,
+        primary_position=identity.primary_position,
+        season=season,
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    session.add(PlayerSeasonCatalogRecord.from_domain(entry, created_at=now))
+
+
 def upsert_player_season_hitting(
     session: Session,
     *,
@@ -572,6 +648,20 @@ def upsert_player_season_hitting(
 def _load_player(session: Session, player_id: int) -> PlayerRecord | None:
     return session.scalars(
         select(PlayerRecord).where(PlayerRecord.player_id == player_id)
+    ).one_or_none()
+
+
+def _load_player_season_catalog(
+    session: Session,
+    *,
+    player_id: int,
+    season: int,
+) -> PlayerSeasonCatalogRecord | None:
+    return session.scalars(
+        select(PlayerSeasonCatalogRecord).where(
+            PlayerSeasonCatalogRecord.player_id == player_id,
+            PlayerSeasonCatalogRecord.season == season,
+        )
     ).one_or_none()
 
 

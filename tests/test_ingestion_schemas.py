@@ -14,6 +14,7 @@ from app.schemas.ingestion import (
     LeagueSeasonIngestionStatus,
     LeagueTeamIngestionResult,
     LeagueTeamIngestionStatus,
+    PlayerCatalogIngestionResult,
     TeamSeasonIngestionResult,
 )
 
@@ -212,4 +213,26 @@ def test_a_failed_team_cannot_claim_persisted_records() -> None:
             updated=0,
             unchanged=0,
             error="TeamGameLogError: nope",
+        )
+
+
+def test_player_catalog_result_accounts_for_every_discovered_player() -> None:
+    result = PlayerCatalogIngestionResult(
+        season=SEASON,
+        players_discovered=1470,
+        inserted=1400,
+        updated=20,
+        unchanged=50,
+    )
+    assert result.players_discovered == 1470
+
+
+def test_player_catalog_result_rejects_unaccounted_players() -> None:
+    with pytest.raises(ValueError, match="players_discovered"):
+        PlayerCatalogIngestionResult(
+            season=SEASON,
+            players_discovered=1470,
+            inserted=1400,
+            updated=20,
+            unchanged=49,
         )

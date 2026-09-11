@@ -7,7 +7,11 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.database.models import PlayerRecord, PlayerSeasonHittingRecord
+from app.database.models import (
+    PlayerRecord,
+    PlayerSeasonCatalogRecord,
+    PlayerSeasonHittingRecord,
+)
 from app.database.repositories import get_player, get_player_season_hitting
 from app.schemas.ingestion import PlayerPersistenceOutcome
 from app.services.player_season_ingestion import (
@@ -312,6 +316,19 @@ def test_no_client_supplied_shares_one_owned_client_for_both_mlb_calls(
     assert construction_count == 1
     assert owned.calls == ["get_person", "get_player_stats"]
     assert owned.closed is True
+
+
+def test_player_season_import_also_records_catalog_membership(
+    migrated_session: Session,
+) -> None:
+    ingest_player_season(
+        session=migrated_session,
+        player_id=PLAYER_ID,
+        season=SEASON,
+        client=make_client(),
+    )
+    memberships = migrated_session.query(PlayerSeasonCatalogRecord).all()
+    assert [(row.player_id, row.season) for row in memberships] == [(PLAYER_ID, SEASON)]
 
 
 def test_supplied_client_is_reused_for_both_calls_and_never_closed(

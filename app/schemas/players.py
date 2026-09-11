@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -20,6 +22,48 @@ class PlayerIdentity(BaseModel):
     primary_position: str = Field(
         min_length=1, description="MLB-reported primary position abbreviation."
     )
+
+    def name_sort_key(self) -> tuple[str, str, int]:
+        """Return this player's position in alphabetical-by-name display order.
+
+        MLB rosters contain many accented names, and both of the orderings
+        available by default place them after every unaccented name: SQLite's
+        default collation compares raw bytes, and Python's ``casefold`` lowers
+        case without folding accents. Neither puts ``Ángel Martínez`` under A.
+
+        Ordering therefore lives here rather than in an ``ORDER BY`` clause, so
+        that MLB discovery and the persisted catalog return the same players in
+        the same order. ``full_name`` breaks ties between names that fold
+        together (``Zoë`` and ``zoë``) and ``player_id`` makes the result total.
+        """
+        decomposed = unicodedata.normalize("NFKD", self.full_name)
+        folded = "".join(
+            character
+            for character in decomposed
+            if not unicodedata.combining(character)
+        ).casefold()
+        return (folded, self.full_name, self.player_id)
+
+
+class PlayerSeasonCatalogEntry(PlayerIdentity):
+    """One MLB player identity associated with one season's player directory.
+
+    The season scopes membership, not the identity fields. MLB's historical
+    ``get_people`` responses return current biographical details for a person,
+    so ``full_name`` and ``primary_position`` continue to live on the global
+    player identity while this model adds the season in which MLB listed that
+    person as a Major League player.
+    """
+
+    season: int = Field(gt=0, description="MLB season directory membership.")
+
+    def to_identity(self) -> PlayerIdentity:
+        """Return the global identity portion used by ``players`` persistence."""
+        return PlayerIdentity(
+            player_id=self.player_id,
+            full_name=self.full_name,
+            primary_position=self.primary_position,
+        )
 
 
 class PlayerSeasonHitting(BaseModel):
