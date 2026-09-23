@@ -234,22 +234,46 @@ scattered inline:
 
 ## 5. Web routes — `app/web/routes.py`
 
-Four page routes (`/`, `/strikeouts`, `/runs`, `/comparison`) share one
-skeleton, repeated per route rather than factored into a shared helper
-(again, a deliberate legibility tradeoff — each route's docstring and
-error branches read as one linear story):
+When this was written, four page routes (`/`, `/strikeouts`, `/runs`,
+`/comparison`) shared one skeleton, repeated per route rather than
+factored into a shared helper (a deliberate legibility tradeoff — each
+route's docstring and error branches read as one linear story).
+
+**Update (2026-09, issue #44):** by eight analytics routes (adding
+`/baserunners`, `/run-differential`, `/pitching`, `/hits-allowed`) the
+copied prefix had become the part most likely to drift, so it was
+extracted. The split is at the point where a route first needs its own
+records:
 
 ```
+── shared: _prepare_team_season_page(...) ────────────────────────────────
+TeamIdQuery / SeasonQuery / RollingWindowQuery → FastAPI validation (422)
 list_available_team_seasons(session)   → DatabaseSchemaMissingError → 503 page telling you to run alembic
 build_team_options(available)          → empty?  render "no data yet" state
 select_team(teams, team_id)            → not found? → 404 page naming stored teams
 select_season(selected_team, season)   → not found? → 404 page naming stored seasons
-list_team_season(session, ...)         → rows for the chosen team-season
-build_team_*_analysis(games, window)   → pure analytics call
+rebuild nav links from resolved values → PreparedTeamSeasonPage(context, team, season)
+── explicit in each route ────────────────────────────────────────────────
+list_team_season(session, ...)         → rows for the chosen team-season (or pitching / run results)
+build_team_*_analysis(games, window)   → pure analytics call; route-specific 409 / unavailable states
 _load_league_*_comparison(session, …)  → None unless coverage is COMPLETE
 build_team_*_figure(analysis, league)  → Plotly figure
 render + return TemplateResponse
 ```
+
+The helper returns either the prepared selection or an already-rendered
+terminal page, so each route reads `prepared = ...; if isinstance(prepared,
+Response): return prepared` and then continues with its own story. It
+deliberately takes no callbacks or metric configuration: record loading,
+missing-data handling, league gating, and cards stay in the route, because
+those are exactly where the pages differ (run differential's opponent
+pairing, pitching's separate table, comparison's layered unavailability).
+
+One subtlety the helper preserves: terminal pages (empty, unknown team,
+unknown season) build navigation from the *requested* query values, and
+only a resolved selection rebuilds it from the *resolved* values. That is
+why the navigation is built twice. `tests/test_web_page_scaffolding.py`
+pins this shared contract across all eight routes.
 
 Every branch point returns a real, styled page (via
 `app/web/templates/error.html` or the page's own template with a `state`
