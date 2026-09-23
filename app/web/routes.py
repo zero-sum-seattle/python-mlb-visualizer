@@ -4,6 +4,7 @@ Every route on this page reads the local database only. The MLB Stats API is
 reached exclusively from the import CLI.
 """
 
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal, get_args
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -145,6 +146,7 @@ from app.web.navigation import (
     build_nav_links,
 )
 from app.web.selection import (
+    TeamOption,
     build_team_options,
     build_team_seasons_catalog,
     select_season,
@@ -170,6 +172,21 @@ def _coerce_window(value: object) -> object:
 
 
 RollingWindowParam = Annotated[RollingWindow, BeforeValidator(_coerce_window)]
+
+# The query contract every team-season analytics page accepts. Declared once so
+# the eight routes cannot drift apart; FastAPI still validates each parameter.
+TeamIdQuery = Annotated[
+    int | None,
+    Query(gt=0, description="MLB team id that has been imported locally."),
+]
+SeasonQuery = Annotated[
+    int | None,
+    Query(gt=0, description="Season that has been imported for the team."),
+]
+RollingWindowQuery = Annotated[
+    RollingWindowParam,
+    Query(description="Games in the trailing rolling average."),
+]
 
 PLOTLY_BUNDLE_PATH = "/vendor/plotly.min.js"
 # Club and league marks are fetched by the browser from MLB's public logo
@@ -204,84 +221,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def index(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render team hitting trends for one persisted team-season."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": HITS_PATH,
-            "nav_links": build_nav_links(
-                current_path=HITS_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="index.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request, name="index.html", context=context, status_code=404
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request, name="index.html", context=context, status_code=404
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=HITS_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=HITS_PATH,
+            template_name="index.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         games = list_team_season(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -311,90 +272,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def strikeouts(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render batting strikeout trends for one persisted team-season."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": STRIKEOUTS_PATH,
-            "nav_links": build_nav_links(
-                current_path=STRIKEOUTS_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="strikeouts.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="strikeouts.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="strikeouts.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=STRIKEOUTS_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=STRIKEOUTS_PATH,
+            template_name="strikeouts.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         games = list_team_season(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -459,84 +358,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def runs(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render run-scoring trends for one persisted team-season."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": RUNS_PATH,
-            "nav_links": build_nav_links(
-                current_path=RUNS_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="runs.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request, name="runs.html", context=context, status_code=404
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request, name="runs.html", context=context, status_code=404
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=RUNS_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=RUNS_PATH,
+            template_name="runs.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         games = list_team_season(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -564,90 +407,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def baserunners(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render baserunners trends for one persisted team-season."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": BASERUNNERS_PATH,
-            "nav_links": build_nav_links(
-                current_path=BASERUNNERS_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="baserunners.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="baserunners.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="baserunners.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=BASERUNNERS_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=BASERUNNERS_PATH,
+            template_name="baserunners.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         games = list_team_season(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -712,90 +493,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def run_differential(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render run differential and Pythagorean record for one team-season."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": RUN_DIFFERENTIAL_PATH,
-            "nav_links": build_nav_links(
-                current_path=RUN_DIFFERENTIAL_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="run_differential.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="run_differential.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="run_differential.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=RUN_DIFFERENTIAL_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=RUN_DIFFERENTIAL_PATH,
+            template_name="run_differential.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         run_results = list_team_season_run_results(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -852,90 +571,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def hits_allowed(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render hits-allowed trends for one persisted team-season."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": HITS_ALLOWED_PATH,
-            "nav_links": build_nav_links(
-                current_path=HITS_ALLOWED_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="hits_allowed.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="hits_allowed.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="hits_allowed.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=HITS_ALLOWED_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=HITS_ALLOWED_PATH,
+            template_name="hits_allowed.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         games = list_team_season_pitching(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -987,90 +644,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def pitching(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render pitching trends for one persisted team-season."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": PITCHING_PATH,
-            "nav_links": build_nav_links(
-                current_path=PITCHING_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="pitching.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="pitching.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="pitching.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=PITCHING_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=PITCHING_PATH,
+            template_name="pitching.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         games = list_team_season_pitching(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -1122,90 +717,28 @@ def create_router(templates: Jinja2Templates, settings: Settings) -> APIRouter:
     def hitting_comparison(
         request: Request,
         session: Annotated[Session, Depends(get_db_session)],
-        team_id: Annotated[
-            int | None,
-            Query(gt=0, description="MLB team id that has been imported locally."),
-        ] = None,
-        season: Annotated[
-            int | None,
-            Query(gt=0, description="Season that has been imported for the team."),
-        ] = None,
-        window: Annotated[
-            RollingWindowParam,
-            Query(description="Games in the trailing rolling average."),
-        ] = DEFAULT_ROLLING_WINDOW,
+        team_id: TeamIdQuery = None,
+        season: SeasonQuery = None,
+        window: RollingWindowQuery = DEFAULT_ROLLING_WINDOW,
     ) -> Response:
         """Render normalized rolling Hits/Game and batting K/Game trends."""
-        try:
-            available = list_available_team_seasons(session)
-        except DatabaseSchemaMissingError as exc:
-            return _render_schema_error(templates, request, settings, exc)
-
-        teams = build_team_options(available)
-        context: dict[str, Any] = {
-            "app_name": settings.app_name,
-            "teams": teams,
-            "team_seasons_catalog": build_team_seasons_catalog(teams),
-            "window_options": ROLLING_WINDOW_OPTIONS,
-            "selected_window": window,
-            "selected_team": None,
-            "selected_season": None,
-            "import_command": IMPORT_COMMAND,
-            "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
-            "mlb_logo_url": MLB_LOGO_URL,
-            "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
-            "form_action": COMPARISON_PATH,
-            "nav_links": build_nav_links(
-                current_path=COMPARISON_PATH,
-                team_id=team_id,
-                season=season,
-                window=window,
-            ),
-        }
-
-        if not teams:
-            context["state"] = "empty"
-            return templates.TemplateResponse(
-                request=request, name="comparison.html", context=context
-            )
-
-        selected_team = select_team(teams, team_id)
-        if selected_team is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No games are stored for team id {team_id}. "
-                "Pick a team that has been imported, or import that team."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="comparison.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_team"] = selected_team
-        selected_season = select_season(selected_team, season)
-        if selected_season is None:
-            context["state"] = "not_found"
-            context["not_found_message"] = (
-                f"No {season} games are stored for {selected_team.team_name}. "
-                f"Stored seasons: "
-                f"{', '.join(str(value) for value in selected_team.seasons)}."
-            )
-            return templates.TemplateResponse(
-                request=request,
-                name="comparison.html",
-                context=context,
-                status_code=404,
-            )
-
-        context["selected_season"] = selected_season
-        context["nav_links"] = build_nav_links(
-            current_path=COMPARISON_PATH,
-            team_id=selected_team.team_id,
-            season=selected_season,
+        prepared = _prepare_team_season_page(
+            templates,
+            settings,
+            request,
+            session,
+            path=COMPARISON_PATH,
+            template_name="comparison.html",
+            team_id=team_id,
+            season=season,
             window=window,
         )
+        if isinstance(prepared, Response):
+            return prepared
+
+        context = prepared.context
+        selected_team = prepared.team
+        selected_season = prepared.season
         games = list_team_season(
             session, team_id=selected_team.team_id, season=selected_season
         )
@@ -1488,6 +1021,110 @@ def _load_league_baserunners_comparison(
     league_games = list_league_season(session, season=analysis.season)
     league = build_league_baserunners_context(league_games)
     return compare_team_baserunners_to_league(analysis, league)
+
+
+@dataclass(frozen=True)
+class PreparedTeamSeasonPage:
+    """A team-season selection that resolved to stored data.
+
+    ``context`` holds the shared template values, with the navigation already
+    rebuilt from the resolved team and season. The route adds its own records,
+    analysis, and state to it. Nothing metric-specific is loaded here.
+    """
+
+    context: dict[str, Any]
+    team: TeamOption
+    season: int
+
+
+def _prepare_team_season_page(
+    templates: Jinja2Templates,
+    settings: Settings,
+    request: Request,
+    session: Session,
+    *,
+    path: str,
+    template_name: str,
+    team_id: int | None,
+    season: int | None,
+    window: RollingWindow,
+) -> PreparedTeamSeasonPage | Response:
+    """Resolve the team-season every analytics page needs before its own data.
+
+    Returns the rendered page instead when there is nothing to analyse: the
+    schema is missing (503), nothing is stored yet, or the requested team or
+    season is not stored (404). Those terminal pages keep the *requested*
+    values in the navigation, so the reader's link is carried forward as they
+    typed it. Only a selection that resolves has its navigation rebuilt from
+    the *resolved* values, which is how defaults become shareable links.
+    """
+    try:
+        available = list_available_team_seasons(session)
+    except DatabaseSchemaMissingError as exc:
+        return _render_schema_error(templates, request, settings, exc)
+
+    teams = build_team_options(available)
+    context: dict[str, Any] = {
+        "app_name": settings.app_name,
+        "teams": teams,
+        "team_seasons_catalog": build_team_seasons_catalog(teams),
+        "window_options": ROLLING_WINDOW_OPTIONS,
+        "selected_window": window,
+        "selected_team": None,
+        "selected_season": None,
+        "import_command": IMPORT_COMMAND,
+        "plotly_bundle_path": PLOTLY_BUNDLE_PATH,
+        "mlb_logo_url": MLB_LOGO_URL,
+        "team_logo_url_prefix": TEAM_LOGO_URL_PREFIX,
+        "form_action": path,
+        "nav_links": build_nav_links(
+            current_path=path,
+            team_id=team_id,
+            season=season,
+            window=window,
+        ),
+    }
+
+    if not teams:
+        context["state"] = "empty"
+        return templates.TemplateResponse(
+            request=request, name=template_name, context=context
+        )
+
+    selected_team = select_team(teams, team_id)
+    if selected_team is None:
+        context["state"] = "not_found"
+        context["not_found_message"] = (
+            f"No games are stored for team id {team_id}. "
+            "Pick a team that has been imported, or import that team."
+        )
+        return templates.TemplateResponse(
+            request=request, name=template_name, context=context, status_code=404
+        )
+
+    context["selected_team"] = selected_team
+    selected_season = select_season(selected_team, season)
+    if selected_season is None:
+        context["state"] = "not_found"
+        context["not_found_message"] = (
+            f"No {season} games are stored for {selected_team.team_name}. "
+            f"Stored seasons: "
+            f"{', '.join(str(value) for value in selected_team.seasons)}."
+        )
+        return templates.TemplateResponse(
+            request=request, name=template_name, context=context, status_code=404
+        )
+
+    context["selected_season"] = selected_season
+    context["nav_links"] = build_nav_links(
+        current_path=path,
+        team_id=selected_team.team_id,
+        season=selected_season,
+        window=window,
+    )
+    return PreparedTeamSeasonPage(
+        context=context, team=selected_team, season=selected_season
+    )
 
 
 def _render_comparison_unavailable(
