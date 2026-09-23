@@ -199,19 +199,19 @@ whether the "MLB average" line is trustworthy enough to draw at all.
 
 ## 4. Charts — `app/web/charts.py`
 
-One explicit builder function per chart (`build_team_hits_figure`,
-`build_team_strikeouts_figure`, `build_team_runs_figure`,
-`build_team_hitting_comparison_figure`) rather than one parameterized
-builder — the module docstring explains why: a single generic builder
-would have to encode which labels/colors/axis semantics belong to which
-statistic, which wound up harder to read than four builders that look
-almost identical. This is a real, considered tradeoff, not unconsidered
-duplication — worth knowing before you reflexively refactor it into one.
+Each chart keeps an explicit public builder so its baseball meaning remains
+visible in code. The standard per-game count charts share small private helpers
+for mechanical Plotly construction: raw and rolling traces, team/MLB reference
+lines, and their common layout. Metric values, hover wording, trace names, axis
+titles, and MLB-average extraction stay in the public builders rather than in a
+generic chart configuration. Pitching, run differential, and normalized
+comparison retain their independent structures because their axis and series
+semantics differ from the standard count charts.
 
 Details that show up as small functions/constants rather than being
 scattered inline:
 
-- `_trailing_averages`-driven rolling line, a raw-value scatter with
+- A rolling line, a raw-value scatter with
   **open-circle markers** (deliberately, so 162 overlapping season points
   don't merge into a solid blob), and up to two horizontal dashed
   reference lines (team season average in navy, MLB average in amber

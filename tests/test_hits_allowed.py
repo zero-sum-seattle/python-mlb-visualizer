@@ -246,10 +246,34 @@ class TestChart:
             analysis, compare_team_hits_allowed_to_league(analysis, league)
         )
 
-        assert MLB_AVERAGE_TRACE_NAME in [trace.name for trace in figure.data]
+        assert [trace.name for trace in figure.data] == [
+            RAW_HITS_ALLOWED_TRACE_NAME,
+            rolling_average_trace_name(5),
+            TEAM_SEASON_AVERAGE_TRACE_NAME,
+            MLB_AVERAGE_TRACE_NAME,
+        ]
+        assert list(figure.data[3].y) == pytest.approx([8.0, 8.0])
+        assert figure.data[3].hoverinfo == "skip"
+        assert len(figure.layout.annotations) == 1
+        assert figure.layout.annotations[0].text == "MLB Average<br>8.00"
 
     def test_the_raw_series_plots_hits_allowed(self, figure) -> None:
         assert list(figure.data[0].y) == [6, 10, 8, 4, 7]
+
+    def test_hover_keeps_hits_allowed_and_innings_pitched_context(self, figure) -> None:
+        assert (
+            "%{customdata[2]} hits allowed over %{customdata[3]} IP"
+            in figure.data[0].hovertemplate
+        )
+        assert "5-Game Avg: %{customdata[4]:.2f}" in figure.data[0].hovertemplate
+        assert list(figure.data[0].customdata[0][2:]) == [6, "9.0", 6.0]
+
+    def test_the_team_reference_is_labelled_without_league_context(
+        self, figure
+    ) -> None:
+        assert list(figure.data[2].y) == pytest.approx([7.0, 7.0])
+        assert figure.data[2].line.dash == "dash"
+        assert figure.layout.annotations[0].text == "Team Season Average<br>7.00"
 
     def test_the_axis_is_titled_and_starts_at_zero(self, figure) -> None:
         assert figure.layout.yaxis.title.text == HITS_ALLOWED_Y_AXIS_TITLE
