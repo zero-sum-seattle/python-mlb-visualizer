@@ -9,6 +9,7 @@ plain path rather than one with empty parameters.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlencode
 
 HITS_PATH = "/"
@@ -22,12 +23,12 @@ COMPARISON_PATH = "/comparison"
 
 HITS_LABEL = "Hits"
 STRIKEOUTS_LABEL = "Batting Strikeouts"
-RUNS_LABEL = "Runs"
+RUNS_LABEL = "Runs Scored"
 BASERUNNERS_LABEL = "Baserunners"
 RUN_DIFFERENTIAL_LABEL = "Run Differential"
-PITCHING_LABEL = "Pitching"
+PITCHING_LABEL = "Pitching Trends"
 HITS_ALLOWED_LABEL = "Hits Allowed"
-COMPARISON_LABEL = "Comparison"
+COMPARISON_LABEL = "Hits vs Batting Strikeouts"
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class NavLink:
     label: str
     href: str
     is_current: bool
+    group: Literal["Offense", "Pitching", "Results"]
 
 
 def build_nav_links(
@@ -60,41 +62,49 @@ def build_nav_links(
     return [
         NavLink(
             label=HITS_LABEL,
+            group="Offense",
             href=f"{HITS_PATH}{suffix}",
             is_current=current_path == HITS_PATH,
         ),
         NavLink(
             label=STRIKEOUTS_LABEL,
+            group="Offense",
             href=f"{STRIKEOUTS_PATH}{suffix}",
             is_current=current_path == STRIKEOUTS_PATH,
         ),
         NavLink(
             label=RUNS_LABEL,
+            group="Offense",
             href=f"{RUNS_PATH}{suffix}",
             is_current=current_path == RUNS_PATH,
         ),
         NavLink(
             label=BASERUNNERS_LABEL,
+            group="Offense",
             href=f"{BASERUNNERS_PATH}{suffix}",
             is_current=current_path == BASERUNNERS_PATH,
         ),
         NavLink(
             label=RUN_DIFFERENTIAL_LABEL,
+            group="Results",
             href=f"{RUN_DIFFERENTIAL_PATH}{suffix}",
             is_current=current_path == RUN_DIFFERENTIAL_PATH,
         ),
         NavLink(
             label=PITCHING_LABEL,
+            group="Pitching",
             href=f"{PITCHING_PATH}{suffix}",
             is_current=current_path == PITCHING_PATH,
         ),
         NavLink(
             label=HITS_ALLOWED_LABEL,
+            group="Pitching",
             href=f"{HITS_ALLOWED_PATH}{suffix}",
             is_current=current_path == HITS_ALLOWED_PATH,
         ),
         NavLink(
             label=COMPARISON_LABEL,
+            group="Offense",
             href=f"{COMPARISON_PATH}{suffix}",
             is_current=current_path == COMPARISON_PATH,
         ),

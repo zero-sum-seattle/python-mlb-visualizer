@@ -9,9 +9,7 @@
     {% block head %}{% endblock %}
   </head>
   <body>
-    {# One header bar: branding on the left, the real metric navigation on the
-       right. The navigation is the only site-wide control the application
-       actually has, so it fills the space rather than a second stacked bar. #}
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <header class="site-header">
       <div class="shell site-header__inner">
         <a class="brand" href="/">
@@ -19,19 +17,17 @@
           <img class="brand__logo js-logo" src="{{ mlb_logo_url }}" alt="" width="34" height="34" />
           MLB Stats Visualizer
         </a>
-        {% if nav_links %}
-          <nav class="site-nav" aria-label="Metrics">
-            {%- for link in nav_links %}
-              <a class="site-nav__link{% if link.is_current %} site-nav__link--current{% endif %}"
-                 href="{{ link.href }}"
-                 {% if link.is_current %}aria-current="page"{% endif %}>{{ link.label }}</a>
-            {%- endfor %}
-          </nav>
-        {% endif %}
+        <nav class="primary-nav" aria-label="Primary">
+          {% block primary_navigation %}
+            <a class="primary-nav__link" href="/">Teams</a>
+          {% endblock %}
+        </nav>
       </div>
     </header>
 
-    <main class="shell page">{% block content %}{% endblock %}</main>
+    {% block domain_navigation %}{% endblock %}
+
+    <main id="main-content" class="shell page" tabindex="-1">{% block content %}{% endblock %}</main>
 
     <footer class="site-footer">
       <div class="shell site-footer__inner">

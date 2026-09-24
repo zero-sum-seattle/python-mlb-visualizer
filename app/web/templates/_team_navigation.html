@@ -1,0 +1,18 @@
+<nav class="team-nav" aria-label="Team analytics">
+  <div class="shell team-nav__groups">
+    {% for group in ("Offense", "Pitching", "Results") %}
+      <section class="team-nav__group" aria-labelledby="team-nav-{{ group|lower }}">
+        <h2 class="team-nav__heading" id="team-nav-{{ group|lower }}">{{ group }}</h2>
+        <ul class="team-nav__links">
+          {% for link in nav_links if link.group == group %}
+            <li>
+              <a class="team-nav__link{% if link.is_current %} team-nav__link--current{% endif %}"
+                 href="{{ link.href }}"
+                 {% if link.is_current %}aria-current="page"{% endif %}>{{ link.label }}</a>
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endfor %}
+  </div>
+</nav>

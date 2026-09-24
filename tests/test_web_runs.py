@@ -375,7 +375,7 @@ def test_every_page_links_to_runs(client: TestClient, seed: SeedFn) -> None:
     for path in ("/", "/strikeouts", "/runs"):
         body = client.get(path).text
         assert 'href="/runs' in body
-        assert ">Runs</a>" in body
+        assert ">Runs Scored</a>" in body
 
 
 def test_the_runs_page_links_back_to_the_other_pages(

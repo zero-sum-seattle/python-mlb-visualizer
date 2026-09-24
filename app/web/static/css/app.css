@@ -86,39 +86,129 @@ body {
   color: #d8e6f2;
 }
 
-/* Navigation */
+/* Primary/domain navigation */
 
-.site-nav {
+.primary-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.primary-nav__link {
+  display: inline-block;
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  color: #ffffff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.primary-nav__link:hover,
+.primary-nav__link[aria-current="location"] {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.primary-nav__link[aria-current="location"] {
+  text-decoration: underline;
+  text-underline-offset: 0.3em;
+}
+
+.brand:focus-visible,
+.primary-nav__link:focus-visible {
+  outline: 2px solid #7fd3d4;
+  outline-offset: 2px;
+}
+
+/* Team analytics navigation */
+
+.team-nav {
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.team-nav__groups {
+  display: flex;
+  gap: 1rem 2rem;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+.team-nav__group {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.team-nav__group:first-child {
+  flex-grow: 2;
+}
+
+.team-nav__heading {
+  margin: 0 0 0.4rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.team-nav__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-nav__links li {
   max-width: 100%;
 }
 
-.site-nav__link {
-  display: inline-block;
-  padding: 0.4rem 0.85rem;
-  border-radius: 999px;
-  color: #c8d6e5;
+.team-nav__link {
+  display: block;
+  padding: 0.55rem 0.75rem;
+  border-radius: 6px;
+  color: var(--navy);
   font-size: 0.95rem;
   font-weight: 600;
   text-decoration: none;
 }
 
-.site-nav__link:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
+.team-nav__link:hover {
+  background: var(--page-bg);
 }
 
-.site-nav__link--current {
+.team-nav__link--current {
+  background: var(--navy);
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.12);
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
 }
 
-.brand:focus-visible,
-.site-nav__link:focus-visible {
-  outline: 2px solid #7fd3d4;
-  outline-offset: 2px;
+.team-nav__link--current:hover {
+  background: var(--navy-deep);
+}
+
+.team-nav__link:focus-visible,
+.skip-link:focus-visible,
+#main-content:focus-visible {
+  outline: 3px solid var(--teal-dark);
+  outline-offset: 3px;
+}
+
+/* Keyboard shortcut past both navigation landmarks. */
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 10;
+  transform: translateY(-200%);
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  color: var(--navy);
+  font-weight: 700;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }
 
 /* Page */
@@ -488,6 +578,11 @@ body {
 }
 
 @media (max-width: 48rem) {
+  .team-nav__groups {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
   /* Only the inline padding changes with width. A `padding` shorthand here
      would also reset the vertical padding `.page` sets. */
   .shell {
@@ -524,7 +619,7 @@ body {
     gap: 0.5rem;
   }
 
-  .site-nav {
+  .primary-nav {
     margin-left: -0.85rem;
   }
 

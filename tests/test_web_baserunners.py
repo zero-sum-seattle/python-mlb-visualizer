@@ -384,8 +384,8 @@ def test_the_baserunners_page_links_back_to_the_other_pages(
     body = client.get("/baserunners").text
     assert ">Hits</a>" in body
     assert "Batting Strikeouts</a>" in body
-    assert ">Runs</a>" in body
-    assert ">Comparison</a>" in body
+    assert ">Runs Scored</a>" in body
+    assert ">Hits vs Batting Strikeouts</a>" in body
 
 
 def test_navigation_marks_the_baserunners_page_as_current(
