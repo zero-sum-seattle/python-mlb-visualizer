@@ -20,6 +20,45 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.games import HomeAway
 
 
+def _validate_prior_window_pair(
+    prior_value: float | None,
+    change: float | None,
+    *,
+    value_field_name: str,
+) -> None:
+    """Require a prior-window value and its change to be known together."""
+    if (prior_value is not None) != (change is not None):
+        raise ValueError(
+            f"{value_field_name} and change_vs_prior_window must both be "
+            "present or both be None"
+        )
+
+
+def _validate_summary_point_count(games_played: int, point_count: int) -> None:
+    """Require the summary to count exactly the games represented by points."""
+    if games_played != point_count:
+        raise ValueError("summary.games_played must equal the number of chart points")
+
+
+def _validate_teams_within_records(
+    teams_represented: int, team_game_records: int
+) -> None:
+    """Every represented team must have at least one counted record."""
+    if teams_represented > team_game_records:
+        raise ValueError(
+            f"teams_represented ({teams_represented}) cannot exceed "
+            f"team_game_records ({team_game_records})"
+        )
+
+
+def _validate_league_season(season: int, league_season: int) -> None:
+    """Require a team comparison and its league context to describe one season."""
+    if season != league_season:
+        raise ValueError(
+            f"season ({season}) must match the league context season ({league_season})"
+        )
+
+
 class TeamHitsPoint(BaseModel):
     """One completed game plotted on the team hits chart."""
 
@@ -77,13 +116,11 @@ class TeamHitsSummary(BaseModel):
 
     @model_validator(mode="after")
     def _prior_window_fields_agree(self) -> TeamHitsSummary:
-        has_prior = self.prior_window_average is not None
-        has_change = self.change_vs_prior_window is not None
-        if has_prior != has_change:
-            raise ValueError(
-                "prior_window_average and change_vs_prior_window must both be "
-                "present or both be None"
-            )
+        _validate_prior_window_pair(
+            self.prior_window_average,
+            self.change_vs_prior_window,
+            value_field_name="prior_window_average",
+        )
         return self
 
 
@@ -103,10 +140,7 @@ class TeamHitsAnalysis(BaseModel):
 
     @model_validator(mode="after")
     def _summary_matches_points(self) -> TeamHitsAnalysis:
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
         return self
 
     @property
@@ -180,13 +214,11 @@ class TeamStrikeoutsSummary(BaseModel):
 
     @model_validator(mode="after")
     def _prior_window_fields_agree(self) -> TeamStrikeoutsSummary:
-        has_prior = self.prior_window_average is not None
-        has_change = self.change_vs_prior_window is not None
-        if has_prior != has_change:
-            raise ValueError(
-                "prior_window_average and change_vs_prior_window must both be "
-                "present or both be None"
-            )
+        _validate_prior_window_pair(
+            self.prior_window_average,
+            self.change_vs_prior_window,
+            value_field_name="prior_window_average",
+        )
         return self
 
 
@@ -206,10 +238,7 @@ class TeamStrikeoutsAnalysis(BaseModel):
 
     @model_validator(mode="after")
     def _summary_matches_points(self) -> TeamStrikeoutsAnalysis:
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
         return self
 
     @property
@@ -259,11 +288,7 @@ class LeagueHitsContext(BaseModel):
                 f"hits_per_game ({self.hits_per_game}) must equal total_hits / "
                 f"team_game_records ({expected})"
             )
-        if self.teams_represented > self.team_game_records:
-            raise ValueError(
-                f"teams_represented ({self.teams_represented}) cannot exceed "
-                f"team_game_records ({self.team_game_records})"
-            )
+        _validate_teams_within_records(self.teams_represented, self.team_game_records)
         return self
 
 
@@ -294,11 +319,7 @@ class TeamHitsLeagueComparison(BaseModel):
 
     @model_validator(mode="after")
     def _comparison_is_internally_consistent(self) -> TeamHitsLeagueComparison:
-        if self.season != self.league.season:
-            raise ValueError(
-                f"season ({self.season}) must match the league context season "
-                f"({self.league.season})"
-            )
+        _validate_league_season(self.season, self.league.season)
         expected = self.team_hits_per_game - self.league.hits_per_game
         if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
             raise ValueError(
@@ -357,11 +378,7 @@ class LeagueStrikeoutsContext(BaseModel):
                 f"strikeouts_per_game ({self.strikeouts_per_game}) must equal "
                 f"total_strikeouts / team_game_records ({expected})"
             )
-        if self.teams_represented > self.team_game_records:
-            raise ValueError(
-                f"teams_represented ({self.teams_represented}) cannot exceed "
-                f"team_game_records ({self.team_game_records})"
-            )
+        _validate_teams_within_records(self.teams_represented, self.team_game_records)
         return self
 
 
@@ -397,11 +414,7 @@ class TeamStrikeoutsLeagueComparison(BaseModel):
 
     @model_validator(mode="after")
     def _comparison_is_internally_consistent(self) -> TeamStrikeoutsLeagueComparison:
-        if self.season != self.league.season:
-            raise ValueError(
-                f"season ({self.season}) must match the league context season "
-                f"({self.league.season})"
-            )
+        _validate_league_season(self.season, self.league.season)
         expected = self.team_strikeouts_per_game - self.league.strikeouts_per_game
         if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
             raise ValueError(
@@ -504,10 +517,7 @@ class TeamHittingComparisonAnalysis(BaseModel):
     ) -> TeamHittingComparisonAnalysis:
         if not isclose(self.baseline_index, 100.0, rel_tol=0.0, abs_tol=1e-12):
             raise ValueError("baseline_index must equal 100")
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
 
         recent = self.points[-1]
         if not isclose(
@@ -599,13 +609,11 @@ class TeamRunsSummary(BaseModel):
 
     @model_validator(mode="after")
     def _prior_window_fields_agree(self) -> TeamRunsSummary:
-        has_prior = self.prior_window_average is not None
-        has_change = self.change_vs_prior_window is not None
-        if has_prior != has_change:
-            raise ValueError(
-                "prior_window_average and change_vs_prior_window must both be "
-                "present or both be None"
-            )
+        _validate_prior_window_pair(
+            self.prior_window_average,
+            self.change_vs_prior_window,
+            value_field_name="prior_window_average",
+        )
         return self
 
 
@@ -625,10 +633,7 @@ class TeamRunsAnalysis(BaseModel):
 
     @model_validator(mode="after")
     def _summary_matches_points(self) -> TeamRunsAnalysis:
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
         return self
 
     @property
@@ -681,11 +686,7 @@ class LeagueRunsContext(BaseModel):
                 f"runs_per_game ({self.runs_per_game}) must equal total_runs / "
                 f"team_game_records ({expected})"
             )
-        if self.teams_represented > self.team_game_records:
-            raise ValueError(
-                f"teams_represented ({self.teams_represented}) cannot exceed "
-                f"team_game_records ({self.team_game_records})"
-            )
+        _validate_teams_within_records(self.teams_represented, self.team_game_records)
         return self
 
 
@@ -717,11 +718,7 @@ class TeamRunsLeagueComparison(BaseModel):
 
     @model_validator(mode="after")
     def _comparison_is_internally_consistent(self) -> TeamRunsLeagueComparison:
-        if self.season != self.league.season:
-            raise ValueError(
-                f"season ({self.season}) must match the league context season "
-                f"({self.league.season})"
-            )
+        _validate_league_season(self.season, self.league.season)
         expected = self.team_runs_per_game - self.league.runs_per_game
         if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
             raise ValueError(
@@ -796,13 +793,11 @@ class TeamBaserunnersSummary(BaseModel):
 
     @model_validator(mode="after")
     def _prior_window_fields_agree(self) -> TeamBaserunnersSummary:
-        has_prior = self.prior_window_average is not None
-        has_change = self.change_vs_prior_window is not None
-        if has_prior != has_change:
-            raise ValueError(
-                "prior_window_average and change_vs_prior_window must both be "
-                "present or both be None"
-            )
+        _validate_prior_window_pair(
+            self.prior_window_average,
+            self.change_vs_prior_window,
+            value_field_name="prior_window_average",
+        )
         return self
 
 
@@ -822,10 +817,7 @@ class TeamBaserunnersAnalysis(BaseModel):
 
     @model_validator(mode="after")
     def _summary_matches_points(self) -> TeamBaserunnersAnalysis:
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
         return self
 
     @property
@@ -883,11 +875,7 @@ class LeagueBaserunnersContext(BaseModel):
                 f"baserunners_per_game ({self.baserunners_per_game}) must equal "
                 f"total_baserunners / team_game_records ({expected})"
             )
-        if self.teams_represented > self.team_game_records:
-            raise ValueError(
-                f"teams_represented ({self.teams_represented}) cannot exceed "
-                f"team_game_records ({self.team_game_records})"
-            )
+        _validate_teams_within_records(self.teams_represented, self.team_game_records)
         return self
 
 
@@ -923,11 +911,7 @@ class TeamBaserunnersLeagueComparison(BaseModel):
 
     @model_validator(mode="after")
     def _comparison_is_internally_consistent(self) -> TeamBaserunnersLeagueComparison:
-        if self.season != self.league.season:
-            raise ValueError(
-                f"season ({self.season}) must match the league context season "
-                f"({self.league.season})"
-            )
+        _validate_league_season(self.season, self.league.season)
         expected = self.team_baserunners_per_game - self.league.baserunners_per_game
         if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
             raise ValueError(
@@ -1130,13 +1114,11 @@ class TeamRunDifferentialSummary(BaseModel):
                 f"season_average ({self.season_average}) must equal "
                 f"total_run_differential / games_played ({expected_average})"
             )
-        has_prior = self.prior_window_average is not None
-        has_change = self.change_vs_prior_window is not None
-        if has_prior != has_change:
-            raise ValueError(
-                "prior_window_average and change_vs_prior_window must both be "
-                "present or both be None"
-            )
+        _validate_prior_window_pair(
+            self.prior_window_average,
+            self.change_vs_prior_window,
+            value_field_name="prior_window_average",
+        )
         return self
 
 
@@ -1157,10 +1139,7 @@ class TeamRunDifferentialAnalysis(BaseModel):
 
     @model_validator(mode="after")
     def _summary_matches_points(self) -> TeamRunDifferentialAnalysis:
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
         decided = self.pythagorean.actual_wins + self.pythagorean.actual_losses
         if decided != len(self.points):
             raise ValueError(
@@ -1371,13 +1350,11 @@ class TeamPitchingSummary(BaseModel):
 
     @model_validator(mode="after")
     def _prior_window_fields_agree(self) -> TeamPitchingSummary:
-        has_prior = self.prior_window_era is not None
-        has_change = self.change_vs_prior_window is not None
-        if has_prior != has_change:
-            raise ValueError(
-                "prior_window_era and change_vs_prior_window must both be "
-                "present or both be None"
-            )
+        _validate_prior_window_pair(
+            self.prior_window_era,
+            self.change_vs_prior_window,
+            value_field_name="prior_window_era",
+        )
         return self
 
 
@@ -1397,10 +1374,7 @@ class TeamPitchingAnalysis(BaseModel):
 
     @model_validator(mode="after")
     def _summary_matches_points(self) -> TeamPitchingAnalysis:
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
         charted_outs = sum(point.outs for point in self.points)
         if charted_outs != self.summary.season.outs:
             raise ValueError(
@@ -1476,11 +1450,7 @@ class LeaguePitchingContext(BaseModel):
                 f"era ({self.era}) must equal total_earned_runs * 27 / outs "
                 f"({expected_era})"
             )
-        if self.teams_represented > self.team_game_records:
-            raise ValueError(
-                f"teams_represented ({self.teams_represented}) cannot exceed "
-                f"team_game_records ({self.team_game_records})"
-            )
+        _validate_teams_within_records(self.teams_represented, self.team_game_records)
         return self
 
 
@@ -1514,11 +1484,7 @@ class TeamPitchingLeagueComparison(BaseModel):
 
     @model_validator(mode="after")
     def _comparison_is_internally_consistent(self) -> TeamPitchingLeagueComparison:
-        if self.season != self.league.season:
-            raise ValueError(
-                f"season ({self.season}) must match the league context season "
-                f"({self.league.season})"
-            )
+        _validate_league_season(self.season, self.league.season)
         for name, team_value, league_value in (
             ("era_difference_vs_mlb", self.team_era, self.league.era),
             ("whip_difference_vs_mlb", self.team_whip, self.league.whip),
@@ -1622,13 +1588,11 @@ class TeamHitsAllowedSummary(BaseModel):
                 f"hits_per_nine ({self.hits_per_nine}) must equal "
                 f"total_hits_allowed * 27 / total_outs ({expected_rate})"
             )
-        has_prior = self.prior_window_average is not None
-        has_change = self.change_vs_prior_window is not None
-        if has_prior != has_change:
-            raise ValueError(
-                "prior_window_average and change_vs_prior_window must both be "
-                "present or both be None"
-            )
+        _validate_prior_window_pair(
+            self.prior_window_average,
+            self.change_vs_prior_window,
+            value_field_name="prior_window_average",
+        )
         return self
 
 
@@ -1648,10 +1612,7 @@ class TeamHitsAllowedAnalysis(BaseModel):
 
     @model_validator(mode="after")
     def _summary_matches_points(self) -> TeamHitsAllowedAnalysis:
-        if self.summary.games_played != len(self.points):
-            raise ValueError(
-                "summary.games_played must equal the number of chart points"
-            )
+        _validate_summary_point_count(self.summary.games_played, len(self.points))
         charted = sum(point.hits_allowed for point in self.points)
         if charted != self.summary.total_hits_allowed:
             raise ValueError(
@@ -1707,11 +1668,7 @@ class TeamHitsAllowedLeagueComparison(BaseModel):
 
     @model_validator(mode="after")
     def _comparison_is_internally_consistent(self) -> TeamHitsAllowedLeagueComparison:
-        if self.season != self.league.season:
-            raise ValueError(
-                f"season ({self.season}) must match the league context season "
-                f"({self.league.season})"
-            )
+        _validate_league_season(self.season, self.league.season)
         expected = self.team_hits_allowed_per_game - self.league.hits_per_game
         if not isclose(self.difference_vs_mlb, expected, rel_tol=1e-9, abs_tol=1e-9):
             raise ValueError(
