@@ -1,15 +1,12 @@
-"""Plotly figure construction for team hitting visualizations.
+"""Plotly figure construction for team analytics visualizations.
 
 Kept out of the route so the figure contract can be tested without HTTP and so
 the route stays about request handling.
 
-The hits, batting strikeout, runs, baserunners, run differential, and
-normalized comparison figures are built by separate functions that share only
-the rendering helpers below. They look alike, but a single parameterized
-builder would have to encode which labels, colours, and axis semantics belong
-to which statistic, which is harder to read than six explicit builders. The run
-differential figure is the clearest case for keeping them apart: it is the only
-signed metric, so it is the only one that must not anchor its y axis at zero.
+Public builders keep each metric's baseball meaning explicit. Standard
+per-game count charts share small helpers for repeated Plotly mechanics, while
+pitching, run differential, and normalized comparison keep their distinct
+chart structures explicit.
 """
 
 from datetime import date
@@ -179,6 +176,162 @@ def _label_reference_line(
     )
 
 
+def _add_standard_raw_trace(
+    figure: go.Figure,
+    *,
+    game_numbers: list[int],
+    values: list[int],
+    hover_data: list[tuple[object, ...]],
+    trace_name: str,
+    hover_template: str,
+) -> None:
+    """Add the raw per-game observations used by standard count charts."""
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=values,
+            customdata=hover_data,
+            name=trace_name,
+            mode="lines+markers",
+            line={"color": _RAW_LINE, "width": 1.2},
+            # Open circles stay readable when 162 game markers overlap.
+            marker={
+                "size": 5,
+                "color": "rgba(0,0,0,0)",
+                "line": {"color": _RAW_MARKER, "width": 1.2},
+            },
+            hovertemplate=hover_template,
+        )
+    )
+
+
+def _add_standard_rolling_trace(
+    figure: go.Figure,
+    *,
+    game_numbers: list[int],
+    rolling_values: list[float],
+    hover_data: list[tuple[object, ...]],
+    trace_name: str,
+    hover_template: str,
+) -> None:
+    """Add the calculated rolling-average line for a standard count chart."""
+    figure.add_trace(
+        go.Scatter(
+            x=game_numbers,
+            y=rolling_values,
+            customdata=hover_data,
+            name=trace_name,
+            mode="lines",
+            # Straight segments do not imply uncalculated values between games.
+            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
+            hovertemplate=hover_template,
+        )
+    )
+
+
+def _add_standard_reference_lines(
+    figure: go.Figure,
+    *,
+    game_numbers: list[int],
+    season_average: float,
+    mlb_average: float | None,
+) -> None:
+    """Add and label the standard team and optional MLB reference lines."""
+    reference_x = [game_numbers[0], game_numbers[-1]]
+    figure.add_trace(
+        go.Scatter(
+            x=reference_x,
+            y=[season_average, season_average],
+            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
+            mode="lines",
+            line={"color": _NAVY, "width": 2, "dash": "dash"},
+            hoverinfo="skip",
+        )
+    )
+    if mlb_average is not None:
+        figure.add_trace(
+            go.Scatter(
+                x=reference_x,
+                y=[mlb_average, mlb_average],
+                name=MLB_AVERAGE_TRACE_NAME,
+                mode="lines",
+                line={"color": _AMBER, "width": 2, "dash": "dot"},
+                hoverinfo="skip",
+            )
+        )
+
+    # The two lines can sit close enough for right-edge labels to overlap.
+    label_value = season_average if mlb_average is None else mlb_average
+    label_name = (
+        TEAM_SEASON_AVERAGE_TRACE_NAME
+        if mlb_average is None
+        else MLB_AVERAGE_TRACE_NAME
+    )
+    _label_reference_line(
+        figure,
+        x=game_numbers[-1],
+        y=label_value,
+        name=label_name,
+    )
+
+
+def _apply_standard_count_chart_layout(
+    figure: go.Figure,
+    *,
+    game_numbers: list[int],
+    game_dates: list[date],
+    y_axis_title: str,
+) -> None:
+    """Apply the shared layout for zero-anchored per-game count charts."""
+    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
+    figure.update_layout(
+        template="plotly_white",
+        # Axis automargin keeps the plot as wide as possible on narrow screens.
+        margin=_MARGIN,
+        height=470,
+        hovermode="closest",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.04,
+            "xanchor": "center",
+            "x": 0.5,
+            "font": {"size": 12, "color": _AXIS_INK},
+        },
+        xaxis={
+            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
+            "tickfont": _TICK_FONT,
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_labels,
+            "showgrid": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
+            "zeroline": False,
+            "rangemode": "tozero",
+            "automargin": True,
+        },
+        yaxis={
+            "title": {
+                "text": y_axis_title,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
+            "gridcolor": _GRID,
+            "griddash": "dot",
+            "zeroline": False,
+            "rangemode": "tozero",
+            "tickformat": "d",
+            "dtick": 2,
+            "automargin": True,
+        },
+    )
+
+
 def build_team_hits_figure(
     analysis: TeamHitsAnalysis,
     league_comparison: TeamHitsLeagueComparison | None = None,
@@ -214,129 +367,37 @@ def build_team_hits_figure(
     )
 
     figure = go.Figure()
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=hits,
-            customdata=hover_data,
-            name=RAW_HITS_TRACE_NAME,
-            mode="lines+markers",
-            line={"color": _RAW_LINE, "width": 1.2},
-            # Open circles: the game markers sit on top of each other in a
-            # 162-game season, and an outline stays readable where filled
-            # dots merge into a blob.
-            marker={
-                "size": 5,
-                "color": "rgba(0,0,0,0)",
-                "line": {"color": _RAW_MARKER, "width": 1.2},
-            },
-            hovertemplate=hover_template,
-        )
+    _add_standard_raw_trace(
+        figure,
+        game_numbers=game_numbers,
+        values=hits,
+        hover_data=hover_data,
+        trace_name=RAW_HITS_TRACE_NAME,
+        hover_template=hover_template,
     )
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=rolling,
-            customdata=hover_data,
-            name=rolling_name,
-            mode="lines",
-            # Straight segments between calculated points. A spline would
-            # overshoot between games and imply averages nobody calculated.
-            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
-            hovertemplate=hover_template,
-        )
+    _add_standard_rolling_trace(
+        figure,
+        game_numbers=game_numbers,
+        rolling_values=rolling,
+        hover_data=hover_data,
+        trace_name=rolling_name,
+        hover_template=hover_template,
     )
     season_average = analysis.summary.season_average
-    figure.add_trace(
-        go.Scatter(
-            x=[game_numbers[0], game_numbers[-1]],
-            y=[season_average, season_average],
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-            mode="lines",
-            line={"color": _NAVY, "width": 2, "dash": "dash"},
-            hoverinfo="skip",
-        )
+    mlb_average = (
+        None if league_comparison is None else league_comparison.league.hits_per_game
     )
-    if league_comparison is not None:
-        mlb_average = league_comparison.league.hits_per_game
-        figure.add_trace(
-            go.Scatter(
-                x=[game_numbers[0], game_numbers[-1]],
-                y=[mlb_average, mlb_average],
-                name=MLB_AVERAGE_TRACE_NAME,
-                mode="lines",
-                line={"color": _AMBER, "width": 2, "dash": "dot"},
-                hoverinfo="skip",
-            )
-        )
-
-    # Only one of the two horizontal lines is labelled. They can sit within a
-    # tenth of a hit of each other, and two labels there would overlap.
-    if league_comparison is None:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=season_average,
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-        )
-    else:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=league_comparison.league.hits_per_game,
-            name=MLB_AVERAGE_TRACE_NAME,
-        )
-
-    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
-    figure.update_layout(
-        template="plotly_white",
-        # Axis automargin sizes the left and bottom gutters, which keeps the
-        # plot area as wide as possible on a narrow phone screen.
-        margin=_MARGIN,
-        height=470,
-        hovermode="closest",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
-        legend={
-            "orientation": "h",
-            "yanchor": "bottom",
-            "y": 1.04,
-            "xanchor": "center",
-            "x": 0.5,
-            "font": {"size": 12, "color": _AXIS_INK},
-        },
-        xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
-            "tickfont": _TICK_FONT,
-            "tickmode": "array",
-            "tickvals": tick_values,
-            "ticktext": tick_labels,
-            # Only the horizontal gridlines are drawn: they are what a reader
-            # measures a value against, and vertical lines only add noise.
-            "showgrid": False,
-            "showline": True,
-            "linecolor": _AXIS_LINE,
-            "zeroline": False,
-            "rangemode": "tozero",
-            "automargin": True,
-        },
-        yaxis={
-            "title": {
-                "text": Y_AXIS_TITLE,
-                "standoff": 10,
-                "font": _AXIS_TITLE_FONT,
-            },
-            "tickfont": _TICK_FONT,
-            "gridcolor": _GRID,
-            "griddash": "dot",
-            "zeroline": False,
-            "rangemode": "tozero",
-            # Whole numbers of hits; the range still grows with the data.
-            "tickformat": "d",
-            "dtick": 2,
-            "automargin": True,
-        },
+    _add_standard_reference_lines(
+        figure,
+        game_numbers=game_numbers,
+        season_average=season_average,
+        mlb_average=mlb_average,
+    )
+    _apply_standard_count_chart_layout(
+        figure,
+        game_numbers=game_numbers,
+        game_dates=game_dates,
+        y_axis_title=Y_AXIS_TITLE,
     )
     return figure
 
@@ -378,128 +439,39 @@ def build_team_strikeouts_figure(
     )
 
     figure = go.Figure()
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=strikeouts,
-            customdata=hover_data,
-            name=RAW_STRIKEOUTS_TRACE_NAME,
-            mode="lines+markers",
-            line={"color": _RAW_LINE, "width": 1.2},
-            # Open circles: the game markers sit on top of each other in a
-            # 162-game season, and an outline stays readable where filled
-            # dots merge into a blob.
-            marker={
-                "size": 5,
-                "color": "rgba(0,0,0,0)",
-                "line": {"color": _RAW_MARKER, "width": 1.2},
-            },
-            hovertemplate=hover_template,
-        )
+    _add_standard_raw_trace(
+        figure,
+        game_numbers=game_numbers,
+        values=strikeouts,
+        hover_data=hover_data,
+        trace_name=RAW_STRIKEOUTS_TRACE_NAME,
+        hover_template=hover_template,
     )
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=rolling,
-            customdata=hover_data,
-            name=rolling_name,
-            mode="lines",
-            # Straight segments between calculated points. A spline would
-            # overshoot between games and imply averages nobody calculated.
-            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
-            hovertemplate=hover_template,
-        )
+    _add_standard_rolling_trace(
+        figure,
+        game_numbers=game_numbers,
+        rolling_values=rolling,
+        hover_data=hover_data,
+        trace_name=rolling_name,
+        hover_template=hover_template,
     )
     season_average = analysis.summary.season_average
-    figure.add_trace(
-        go.Scatter(
-            x=[game_numbers[0], game_numbers[-1]],
-            y=[season_average, season_average],
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-            mode="lines",
-            line={"color": _NAVY, "width": 2, "dash": "dash"},
-            hoverinfo="skip",
-        )
+    mlb_average = (
+        None
+        if league_comparison is None
+        else league_comparison.league.strikeouts_per_game
     )
-    if league_comparison is not None:
-        mlb_average = league_comparison.league.strikeouts_per_game
-        figure.add_trace(
-            go.Scatter(
-                x=[game_numbers[0], game_numbers[-1]],
-                y=[mlb_average, mlb_average],
-                name=MLB_AVERAGE_TRACE_NAME,
-                mode="lines",
-                line={"color": _AMBER, "width": 2, "dash": "dot"},
-                hoverinfo="skip",
-            )
-        )
-
-    # Only one of the two horizontal lines is labelled. They can sit within a
-    # tenth of a strikeout of each other, and two labels there would overlap.
-    if league_comparison is None:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=season_average,
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-        )
-    else:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=league_comparison.league.strikeouts_per_game,
-            name=MLB_AVERAGE_TRACE_NAME,
-        )
-
-    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
-    figure.update_layout(
-        template="plotly_white",
-        margin=_MARGIN,
-        height=470,
-        hovermode="closest",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
-        legend={
-            "orientation": "h",
-            "yanchor": "bottom",
-            "y": 1.04,
-            "xanchor": "center",
-            "x": 0.5,
-            "font": {"size": 12, "color": _AXIS_INK},
-        },
-        xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
-            "tickfont": _TICK_FONT,
-            "tickmode": "array",
-            "tickvals": tick_values,
-            "ticktext": tick_labels,
-            # Only the horizontal gridlines are drawn: they are what a reader
-            # measures a value against, and vertical lines only add noise.
-            "showgrid": False,
-            "showline": True,
-            "linecolor": _AXIS_LINE,
-            "zeroline": False,
-            "rangemode": "tozero",
-            "automargin": True,
-        },
-        yaxis={
-            "title": {
-                "text": STRIKEOUTS_Y_AXIS_TITLE,
-                "standoff": 10,
-                "font": _AXIS_TITLE_FONT,
-            },
-            "tickfont": _TICK_FONT,
-            "gridcolor": _GRID,
-            "griddash": "dot",
-            "zeroline": False,
-            # Starts at zero like the hits chart, and grows with the data. No
-            # fixed maximum: a team that strikes out 20 times must still fit.
-            "rangemode": "tozero",
-            "tickformat": "d",
-            "dtick": 2,
-            "automargin": True,
-        },
+    _add_standard_reference_lines(
+        figure,
+        game_numbers=game_numbers,
+        season_average=season_average,
+        mlb_average=mlb_average,
+    )
+    _apply_standard_count_chart_layout(
+        figure,
+        game_numbers=game_numbers,
+        game_dates=game_dates,
+        y_axis_title=STRIKEOUTS_Y_AXIS_TITLE,
     )
     return figure
 
@@ -541,128 +513,37 @@ def build_team_runs_figure(
     )
 
     figure = go.Figure()
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=runs,
-            customdata=hover_data,
-            name=RAW_RUNS_TRACE_NAME,
-            mode="lines+markers",
-            line={"color": _RAW_LINE, "width": 1.2},
-            # Open circles: the game markers sit on top of each other in a
-            # 162-game season, and an outline stays readable where filled
-            # dots merge into a blob.
-            marker={
-                "size": 5,
-                "color": "rgba(0,0,0,0)",
-                "line": {"color": _RAW_MARKER, "width": 1.2},
-            },
-            hovertemplate=hover_template,
-        )
+    _add_standard_raw_trace(
+        figure,
+        game_numbers=game_numbers,
+        values=runs,
+        hover_data=hover_data,
+        trace_name=RAW_RUNS_TRACE_NAME,
+        hover_template=hover_template,
     )
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=rolling,
-            customdata=hover_data,
-            name=rolling_name,
-            mode="lines",
-            # Straight segments between calculated points. A spline would
-            # overshoot between games and imply averages nobody calculated.
-            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
-            hovertemplate=hover_template,
-        )
+    _add_standard_rolling_trace(
+        figure,
+        game_numbers=game_numbers,
+        rolling_values=rolling,
+        hover_data=hover_data,
+        trace_name=rolling_name,
+        hover_template=hover_template,
     )
     season_average = analysis.summary.season_average
-    figure.add_trace(
-        go.Scatter(
-            x=[game_numbers[0], game_numbers[-1]],
-            y=[season_average, season_average],
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-            mode="lines",
-            line={"color": _NAVY, "width": 2, "dash": "dash"},
-            hoverinfo="skip",
-        )
+    mlb_average = (
+        None if league_comparison is None else league_comparison.league.runs_per_game
     )
-    if league_comparison is not None:
-        mlb_average = league_comparison.league.runs_per_game
-        figure.add_trace(
-            go.Scatter(
-                x=[game_numbers[0], game_numbers[-1]],
-                y=[mlb_average, mlb_average],
-                name=MLB_AVERAGE_TRACE_NAME,
-                mode="lines",
-                line={"color": _AMBER, "width": 2, "dash": "dot"},
-                hoverinfo="skip",
-            )
-        )
-
-    # Only one of the two horizontal lines is labelled. They can sit within a
-    # tenth of a run of each other, and two labels there would overlap.
-    if league_comparison is None:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=season_average,
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-        )
-    else:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=league_comparison.league.runs_per_game,
-            name=MLB_AVERAGE_TRACE_NAME,
-        )
-
-    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
-    figure.update_layout(
-        template="plotly_white",
-        margin=_MARGIN,
-        height=470,
-        hovermode="closest",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
-        legend={
-            "orientation": "h",
-            "yanchor": "bottom",
-            "y": 1.04,
-            "xanchor": "center",
-            "x": 0.5,
-            "font": {"size": 12, "color": _AXIS_INK},
-        },
-        xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
-            "tickfont": _TICK_FONT,
-            "tickmode": "array",
-            "tickvals": tick_values,
-            "ticktext": tick_labels,
-            # Only the horizontal gridlines are drawn: they are what a reader
-            # measures a value against, and vertical lines only add noise.
-            "showgrid": False,
-            "showline": True,
-            "linecolor": _AXIS_LINE,
-            "zeroline": False,
-            "rangemode": "tozero",
-            "automargin": True,
-        },
-        yaxis={
-            "title": {
-                "text": RUNS_Y_AXIS_TITLE,
-                "standoff": 10,
-                "font": _AXIS_TITLE_FONT,
-            },
-            "tickfont": _TICK_FONT,
-            "gridcolor": _GRID,
-            "griddash": "dot",
-            "zeroline": False,
-            # Starts at zero like the other charts, and grows with the data. No
-            # fixed maximum: a 20-run blowout must still fit.
-            "rangemode": "tozero",
-            "tickformat": "d",
-            "dtick": 2,
-            "automargin": True,
-        },
+    _add_standard_reference_lines(
+        figure,
+        game_numbers=game_numbers,
+        season_average=season_average,
+        mlb_average=mlb_average,
+    )
+    _apply_standard_count_chart_layout(
+        figure,
+        game_numbers=game_numbers,
+        game_dates=game_dates,
+        y_axis_title=RUNS_Y_AXIS_TITLE,
     )
     return figure
 
@@ -704,128 +585,39 @@ def build_team_baserunners_figure(
     )
 
     figure = go.Figure()
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=baserunners,
-            customdata=hover_data,
-            name=RAW_BASERUNNERS_TRACE_NAME,
-            mode="lines+markers",
-            line={"color": _RAW_LINE, "width": 1.2},
-            # Open circles: the game markers sit on top of each other in a
-            # 162-game season, and an outline stays readable where filled
-            # dots merge into a blob.
-            marker={
-                "size": 5,
-                "color": "rgba(0,0,0,0)",
-                "line": {"color": _RAW_MARKER, "width": 1.2},
-            },
-            hovertemplate=hover_template,
-        )
+    _add_standard_raw_trace(
+        figure,
+        game_numbers=game_numbers,
+        values=baserunners,
+        hover_data=hover_data,
+        trace_name=RAW_BASERUNNERS_TRACE_NAME,
+        hover_template=hover_template,
     )
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=rolling,
-            customdata=hover_data,
-            name=rolling_name,
-            mode="lines",
-            # Straight segments between calculated points. A spline would
-            # overshoot between games and imply averages nobody calculated.
-            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
-            hovertemplate=hover_template,
-        )
+    _add_standard_rolling_trace(
+        figure,
+        game_numbers=game_numbers,
+        rolling_values=rolling,
+        hover_data=hover_data,
+        trace_name=rolling_name,
+        hover_template=hover_template,
     )
     season_average = analysis.summary.season_average
-    figure.add_trace(
-        go.Scatter(
-            x=[game_numbers[0], game_numbers[-1]],
-            y=[season_average, season_average],
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-            mode="lines",
-            line={"color": _NAVY, "width": 2, "dash": "dash"},
-            hoverinfo="skip",
-        )
+    mlb_average = (
+        None
+        if league_comparison is None
+        else league_comparison.league.baserunners_per_game
     )
-    if league_comparison is not None:
-        mlb_average = league_comparison.league.baserunners_per_game
-        figure.add_trace(
-            go.Scatter(
-                x=[game_numbers[0], game_numbers[-1]],
-                y=[mlb_average, mlb_average],
-                name=MLB_AVERAGE_TRACE_NAME,
-                mode="lines",
-                line={"color": _AMBER, "width": 2, "dash": "dot"},
-                hoverinfo="skip",
-            )
-        )
-
-    # Only one of the two horizontal lines is labelled. They can sit within a
-    # tenth of a baserunner of each other, and two labels there would overlap.
-    if league_comparison is None:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=season_average,
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-        )
-    else:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=league_comparison.league.baserunners_per_game,
-            name=MLB_AVERAGE_TRACE_NAME,
-        )
-
-    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
-    figure.update_layout(
-        template="plotly_white",
-        margin=_MARGIN,
-        height=470,
-        hovermode="closest",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
-        legend={
-            "orientation": "h",
-            "yanchor": "bottom",
-            "y": 1.04,
-            "xanchor": "center",
-            "x": 0.5,
-            "font": {"size": 12, "color": _AXIS_INK},
-        },
-        xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
-            "tickfont": _TICK_FONT,
-            "tickmode": "array",
-            "tickvals": tick_values,
-            "ticktext": tick_labels,
-            # Only the horizontal gridlines are drawn: they are what a reader
-            # measures a value against, and vertical lines only add noise.
-            "showgrid": False,
-            "showline": True,
-            "linecolor": _AXIS_LINE,
-            "zeroline": False,
-            "rangemode": "tozero",
-            "automargin": True,
-        },
-        yaxis={
-            "title": {
-                "text": BASERUNNERS_Y_AXIS_TITLE,
-                "standoff": 10,
-                "font": _AXIS_TITLE_FONT,
-            },
-            "tickfont": _TICK_FONT,
-            "gridcolor": _GRID,
-            "griddash": "dot",
-            "zeroline": False,
-            # Starts at zero like the other charts, and grows with the data. No
-            # fixed maximum: a high-traffic offensive game must still fit.
-            "rangemode": "tozero",
-            "tickformat": "d",
-            "dtick": 2,
-            "automargin": True,
-        },
+    _add_standard_reference_lines(
+        figure,
+        game_numbers=game_numbers,
+        season_average=season_average,
+        mlb_average=mlb_average,
+    )
+    _apply_standard_count_chart_layout(
+        figure,
+        game_numbers=game_numbers,
+        game_dates=game_dates,
+        y_axis_title=BASERUNNERS_Y_AXIS_TITLE,
     )
     return figure
 
@@ -872,126 +664,37 @@ def build_team_hits_allowed_figure(
     )
 
     figure = go.Figure()
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=hits_allowed,
-            customdata=hover_data,
-            name=RAW_HITS_ALLOWED_TRACE_NAME,
-            mode="lines+markers",
-            line={"color": _RAW_LINE, "width": 1.2},
-            # Open circles: the game markers sit on top of each other across a
-            # 162-game season, and an outline stays readable where filled dots
-            # merge into a blob.
-            marker={
-                "size": 5,
-                "color": "rgba(0,0,0,0)",
-                "line": {"color": _RAW_MARKER, "width": 1.2},
-            },
-            hovertemplate=hover_template,
-        )
+    _add_standard_raw_trace(
+        figure,
+        game_numbers=game_numbers,
+        values=hits_allowed,
+        hover_data=hover_data,
+        trace_name=RAW_HITS_ALLOWED_TRACE_NAME,
+        hover_template=hover_template,
     )
-    figure.add_trace(
-        go.Scatter(
-            x=game_numbers,
-            y=rolling,
-            customdata=hover_data,
-            name=rolling_name,
-            mode="lines",
-            # Straight segments between calculated points. A spline would
-            # overshoot between games and imply averages nobody calculated.
-            line={"color": _TEAL, "width": 3.5, "shape": "linear"},
-            hovertemplate=hover_template,
-        )
+    _add_standard_rolling_trace(
+        figure,
+        game_numbers=game_numbers,
+        rolling_values=rolling,
+        hover_data=hover_data,
+        trace_name=rolling_name,
+        hover_template=hover_template,
     )
     season_average = analysis.summary.season_average
-    figure.add_trace(
-        go.Scatter(
-            x=[game_numbers[0], game_numbers[-1]],
-            y=[season_average, season_average],
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-            mode="lines",
-            line={"color": _NAVY, "width": 2, "dash": "dash"},
-            hoverinfo="skip",
-        )
+    mlb_average = (
+        None if league_comparison is None else league_comparison.league.hits_per_game
     )
-    if league_comparison is not None:
-        mlb_average = league_comparison.league.hits_per_game
-        figure.add_trace(
-            go.Scatter(
-                x=[game_numbers[0], game_numbers[-1]],
-                y=[mlb_average, mlb_average],
-                name=MLB_AVERAGE_TRACE_NAME,
-                mode="lines",
-                line={"color": _AMBER, "width": 2, "dash": "dot"},
-                hoverinfo="skip",
-            )
-        )
-
-    # Only one of the two horizontal lines is labelled. They can sit within a
-    # tenth of a hit of each other, and two labels there would overlap.
-    if league_comparison is None:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=season_average,
-            name=TEAM_SEASON_AVERAGE_TRACE_NAME,
-        )
-    else:
-        _label_reference_line(
-            figure,
-            x=game_numbers[-1],
-            y=league_comparison.league.hits_per_game,
-            name=MLB_AVERAGE_TRACE_NAME,
-        )
-
-    tick_values, tick_labels = _season_game_ticks(game_numbers, game_dates)
-    figure.update_layout(
-        template="plotly_white",
-        margin=_MARGIN,
-        height=470,
-        hovermode="closest",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
-        legend={
-            "orientation": "h",
-            "yanchor": "bottom",
-            "y": 1.04,
-            "xanchor": "center",
-            "x": 0.5,
-            "font": {"size": 12, "color": _AXIS_INK},
-        },
-        xaxis={
-            "title": {"text": X_AXIS_TITLE, "standoff": 10, "font": _AXIS_TITLE_FONT},
-            "tickfont": _TICK_FONT,
-            "tickmode": "array",
-            "tickvals": tick_values,
-            "ticktext": tick_labels,
-            "showgrid": False,
-            "showline": True,
-            "linecolor": _AXIS_LINE,
-            "zeroline": False,
-            "rangemode": "tozero",
-            "automargin": True,
-        },
-        yaxis={
-            "title": {
-                "text": HITS_ALLOWED_Y_AXIS_TITLE,
-                "standoff": 10,
-                "font": _AXIS_TITLE_FONT,
-            },
-            "tickfont": _TICK_FONT,
-            "gridcolor": _GRID,
-            "griddash": "dot",
-            "zeroline": False,
-            # A no-hitter is a real 0, so the axis starts at zero and grows
-            # with the data, exactly as the hits chart does.
-            "rangemode": "tozero",
-            "tickformat": "d",
-            "dtick": 2,
-            "automargin": True,
-        },
+    _add_standard_reference_lines(
+        figure,
+        game_numbers=game_numbers,
+        season_average=season_average,
+        mlb_average=mlb_average,
+    )
+    _apply_standard_count_chart_layout(
+        figure,
+        game_numbers=game_numbers,
+        game_dates=game_dates,
+        y_axis_title=HITS_ALLOWED_Y_AXIS_TITLE,
     )
     return figure
 
