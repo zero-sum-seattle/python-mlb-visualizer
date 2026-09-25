@@ -106,19 +106,19 @@ def page_for(path: str) -> AnalyticsPage:
 
 
 class NavigationParser(HTMLParser):
-    """Read semantic navigation independently of CSS classes and whitespace."""
+    """Read navigation semantics and the focused group-label markup."""
 
     def __init__(self, body: str) -> None:
         super().__init__()
         self.landmarks: dict[str, list[dict[str, str]]] = {}
-        self.headings: list[str] = []
+        self.group_labels: list[str] = []
         self.main_ids: list[str | None] = []
         self.skip_target: str | None = None
         self.current_pages = 0
         self.tabs = False
         self._nav: str | None = None
         self._link: dict[str, str] | None = None
-        self._heading = False
+        self._group_label = False
         self.feed(body)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -137,31 +137,35 @@ class NavigationParser(HTMLParser):
             if attributes.get("class") == "skip-link":
                 self.skip_target = attributes.get("href")
             if self._nav:
-                assert not self._heading, "group headings must not be links"
+                assert not self._group_label, "group labels must not be links"
                 self._link = {
                     "label": "",
                     "href": attributes.get("href") or "",
                     "current": attributes.get("aria-current") or "",
                 }
                 self.landmarks[self._nav].append(self._link)
-        if tag == "h2" and self._nav == "Team analytics":
-            assert self._link is None, "group headings must not be links"
-            self._heading = True
-            self.headings.append("")
+        if (
+            tag == "p"
+            and attributes.get("class") == "team-nav__heading"
+            and self._nav == "Team analytics"
+        ):
+            assert self._link is None, "group labels must not be links"
+            self._group_label = True
+            self.group_labels.append("")
 
     def handle_data(self, data: str) -> None:
         if self._link is not None:
             self._link["label"] += data.strip()
-        if self._heading:
-            self.headings[-1] += data.strip()
+        if self._group_label:
+            self.group_labels[-1] += data.strip()
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "nav":
             self._nav = None
         if tag == "a":
             self._link = None
-        if tag == "h2":
-            self._heading = False
+        if tag == "p":
+            self._group_label = False
 
 
 def assert_navigation(body: str, *, current: AnalyticsPage, query: str) -> None:
@@ -190,7 +194,7 @@ def assert_navigation(body: str, *, current: AnalyticsPage, query: str) -> None:
         }
         for path in order
     ]
-    assert navigation.headings == ["Offense", "Pitching", "Results"]
+    assert navigation.group_labels == ["Offense", "Pitching", "Results"]
     assert navigation.current_pages == 1
     assert not navigation.tabs
     assert navigation.skip_target == "#main-content"
