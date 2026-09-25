@@ -16,10 +16,9 @@ Every test builds a freshly migrated SQLite database, so each test makes all
 the assertions for one route and one state rather than one assertion apiece.
 """
 
-import html
-import re
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -60,12 +59,14 @@ class AnalyticsPage:
 PAGES = (
     AnalyticsPage("/", "Team Hitting Trends", "Hits"),
     AnalyticsPage("/strikeouts", "Team Batting Strikeout Trends", "Batting Strikeouts"),
-    AnalyticsPage("/runs", "Team Run Scoring Trends", "Runs"),
+    AnalyticsPage("/runs", "Team Run Scoring Trends", "Runs Scored"),
     AnalyticsPage("/baserunners", "Team Baserunners Trends", "Baserunners"),
     AnalyticsPage("/run-differential", "Team Run Differential", "Run Differential"),
-    AnalyticsPage("/pitching", "Team Pitching Trends", "Pitching"),
+    AnalyticsPage("/pitching", "Team Pitching Trends", "Pitching Trends"),
     AnalyticsPage("/hits-allowed", "Team Hits Allowed Trends", "Hits Allowed"),
-    AnalyticsPage("/comparison", "Team Hitting Trends Comparison", "Comparison"),
+    AnalyticsPage(
+        "/comparison", "Team Hitting Trends Comparison", "Hits vs Batting Strikeouts"
+    ),
 )
 PAGE_PATHS = tuple(page.path for page in PAGES)
 
@@ -103,39 +104,101 @@ def page_for(path: str) -> AnalyticsPage:
 
 # --- Navigation assertion helpers ---------------------------------------------
 
-_NAV_LINK_PATTERN = re.compile(
-    r'<a class="site-nav__link(?P<current> site-nav__link--current)?"\s+'
-    r'href="(?P<href>[^"]*)"\s*(?:aria-current="page")?>(?P<label>[^<]+)</a>'
-)
 
+class NavigationParser(HTMLParser):
+    """Read navigation semantics and the focused group-label markup."""
 
-@dataclass(frozen=True)
-class RenderedNavLink:
-    label: str
-    href: str
-    is_current: bool
+    def __init__(self, body: str) -> None:
+        super().__init__()
+        self.landmarks: dict[str, list[dict[str, str]]] = {}
+        self.group_labels: list[str] = []
+        self.main_ids: list[str | None] = []
+        self.skip_target: str | None = None
+        self.current_pages = 0
+        self.tabs = False
+        self._nav: str | None = None
+        self._link: dict[str, str] | None = None
+        self._group_label = False
+        self.feed(body)
 
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if attributes.get("aria-current") == "page":
+            self.current_pages += 1
+        if attributes.get("role") in ("tab", "tablist"):
+            self.tabs = True
+        if tag == "nav":
+            self._nav = attributes.get("aria-label")
+            assert self._nav, "navigation landmarks need accessible names"
+            self.landmarks[self._nav] = []
+        if tag == "main":
+            self.main_ids.append(attributes.get("id"))
+        if tag == "a":
+            if attributes.get("class") == "skip-link":
+                self.skip_target = attributes.get("href")
+            if self._nav:
+                assert not self._group_label, "group labels must not be links"
+                self._link = {
+                    "label": "",
+                    "href": attributes.get("href") or "",
+                    "current": attributes.get("aria-current") or "",
+                }
+                self.landmarks[self._nav].append(self._link)
+        if (
+            tag == "p"
+            and attributes.get("class") == "team-nav__heading"
+            and self._nav == "Team analytics"
+        ):
+            assert self._link is None, "group labels must not be links"
+            self._group_label = True
+            self.group_labels.append("")
 
-def rendered_nav_links(body: str) -> list[RenderedNavLink]:
-    links = [
-        RenderedNavLink(
-            label=match.group("label"),
-            href=html.unescape(match.group("href")),
-            is_current=match.group("current") is not None,
-        )
-        for match in _NAV_LINK_PATTERN.finditer(body)
-    ]
-    assert len(links) == len(PAGES), "the page did not render the full navigation"
-    return links
+    def handle_data(self, data: str) -> None:
+        if self._link is not None:
+            self._link["label"] += data.strip()
+        if self._group_label:
+            self.group_labels[-1] += data.strip()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "nav":
+            self._nav = None
+        if tag == "a":
+            self._link = None
+        if tag == "p":
+            self._group_label = False
 
 
 def assert_navigation(body: str, *, current: AnalyticsPage, query: str) -> None:
-    """Every link carries ``query``, and only ``current`` is marked current."""
+    """Every link carries the selection; domain and document states differ."""
     suffix = f"?{query}" if query else ""
-    links = rendered_nav_links(body)
-    assert [link.href for link in links] == [f"{page.path}{suffix}" for page in PAGES]
-    assert [link.label for link in links if link.is_current] == [current.nav_label]
-    assert body.count('aria-current="page"') == 1
+    navigation = NavigationParser(body)
+    assert list(navigation.landmarks) == ["Primary", "Team analytics"]
+    assert navigation.landmarks["Primary"] == [
+        {"label": "Teams", "href": f"/{suffix}", "current": "location"}
+    ]
+    order = (
+        "/",
+        "/strikeouts",
+        "/runs",
+        "/baserunners",
+        "/comparison",
+        "/pitching",
+        "/hits-allowed",
+        "/run-differential",
+    )
+    assert navigation.landmarks["Team analytics"] == [
+        {
+            "label": page_for(path).nav_label,
+            "href": f"{path}{suffix}",
+            "current": "page" if path == current.path else "",
+        }
+        for path in order
+    ]
+    assert navigation.group_labels == ["Offense", "Pitching", "Results"]
+    assert navigation.current_pages == 1
+    assert not navigation.tabs
+    assert navigation.skip_target == "#main-content"
+    assert navigation.main_ids == ["main-content"]
 
 
 def expected_query(team_id: int | None, season: int | None, window: int) -> str:
@@ -404,6 +467,7 @@ def test_invalid_query_values_are_rejected_by_fastapi_validation(
         assert "That link has a value this page cannot use" in browser_response.text
         assert f"{parameter}: " in browser_response.text, url
         assert "Traceback" not in browser_response.text, url
+        assert "Team analytics" not in NavigationParser(browser_response.text).landmarks
 
     window_response = client.get(f"{path}?window=7", headers=BROWSER_HEADERS)
     assert "Input should be 5, 10, 15 or 30" in window_response.text
@@ -425,7 +489,8 @@ def test_missing_schema_renders_the_migration_error_page(
     # error.html, not the route template: no page heading, selector, or nav.
     assert f"<h1>{page_for(path).heading}</h1>" not in body
     assert '<select id="team_id"' not in body
-    assert 'aria-label="Metrics"' not in body
+    assert "Team analytics" not in NavigationParser(body).landmarks
+    assert NavigationParser(body).current_pages == 0
 
 
 # --- DB-only browser rendering ------------------------------------------------
@@ -455,3 +520,20 @@ def test_browser_rendering_never_calls_the_mlb_api(
     )
     assert response.status_code == 200
     assert SEEDED_OUTCOMES[path] in response.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    ("/strikeouts", "/baserunners", "/run-differential", "/pitching", "/hits-allowed"),
+)
+def test_reimport_states_keep_team_navigation(
+    client: TestClient, session_factory: Callable[[], Session], path: str
+) -> None:
+    with session_factory() as session:
+        upsert_team_season(session, lines=make_season(hits=[8] * GAMES))
+        session.commit()
+    response = client.get(f"{path}?team_id=136&season=2025&window=10")
+    assert response.status_code == 409
+    assert_navigation(
+        response.text, current=page_for(path), query=expected_query(136, 2025, 10)
+    )

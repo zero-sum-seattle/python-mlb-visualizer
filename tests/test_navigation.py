@@ -25,12 +25,12 @@ def test_every_metric_page_is_linked() -> None:
     assert [link.label for link in links] == [
         "Hits",
         "Batting Strikeouts",
-        "Runs",
+        "Runs Scored",
         "Baserunners",
         "Run Differential",
-        "Pitching",
+        "Pitching Trends",
         "Hits Allowed",
-        "Comparison",
+        "Hits vs Batting Strikeouts",
     ]
 
 
@@ -181,3 +181,21 @@ def test_unset_values_are_left_out_of_the_query() -> None:
     assert links[5].href == "/pitching?team_id=136&window=30"
     assert links[6].href == "/hits-allowed?team_id=136&window=30"
     assert links[7].href == "/comparison?team_id=136&window=30"
+
+
+def test_team_metrics_have_explicit_baseball_groups() -> None:
+    links = build_nav_links(current_path=HITS_PATH)
+    assert {
+        group: [link.label for link in links if link.group == group]
+        for group in ("Offense", "Pitching", "Results")
+    } == {
+        "Offense": [
+            "Hits",
+            "Batting Strikeouts",
+            "Runs Scored",
+            "Baserunners",
+            "Hits vs Batting Strikeouts",
+        ],
+        "Pitching": ["Pitching Trends", "Hits Allowed"],
+        "Results": ["Run Differential"],
+    }

@@ -264,16 +264,19 @@ def test_page_uses_the_product_header(client: TestClient, seed: SeedFn) -> None:
     assert "Team Hitting Trends" in body
 
 
-def test_the_navigation_sits_inside_the_single_header_bar(
+def test_the_header_separates_domain_navigation_from_team_metrics(
     client: TestClient, seed: SeedFn
 ) -> None:
-    """One header bar carries both the branding and the metric navigation."""
+    """The global header identifies the domain; metrics live below it."""
     seed(hits=[7] * 20)
     body = client.get("/").text
     header = body[body.index('class="site-header"') : body.index("</header>")]
     assert "MLB Stats Visualizer" in header
-    assert 'aria-label="Metrics"' in header
-    assert "Batting Strikeouts</a>" in header
+    assert 'aria-label="Primary"' in header
+    assert 'aria-current="location">Teams</a>' in header
+    assert "Batting Strikeouts</a>" not in header
+    assert 'aria-label="Team analytics"' in body
+    assert "Batting Strikeouts</a>" in body
 
 
 def test_the_selector_shows_the_club_logo_for_the_selected_team(
