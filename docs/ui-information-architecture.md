@@ -21,6 +21,12 @@ navigation through `_team_navigation.html`. Individual metric templates retain
 selectors, charts, interpretation, and recovery states. A future Player UI can
 extend the same shell without copying Team assumptions.
 
+Team metric pages include `_team_selector_form.html` for their Team, season, and
+rolling-window GET controls. It relies on the Team-season catalog and stays
+outside the entity-neutral shell; future Player selection should follow its own
+requirements. The small `_summary_cards.html` partial renders route-provided
+cards and preserves Comparison's distinct section class and accessible label.
+
 The brand links to bare `/`. On Team pages, Teams links to the selection-aware
 Hits URL. Metric links preserve `team_id`, `season`, and `window`, including the
 existing requested-versus-resolved distinction in terminal states. Generic

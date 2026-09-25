@@ -234,6 +234,8 @@ def test_page_contains_the_summary_cards(client: TestClient, seed: SeedFn) -> No
     """Milestone 5 replaced the prior-window card with the MLB comparison."""
     seed(hits=[6, 8, 10, 12] * 10)
     body = client.get("/").text
+    assert '<section class="summary" aria-label="Summary statistics">' in body
+    assert body.count('class="card summary-card"') == 4
     assert "Recent 15-Game Avg" in body
     assert "Season Avg" in body
     assert "vs MLB" in body

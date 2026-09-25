@@ -336,6 +336,8 @@ def test_empty_database_renders_the_empty_state_with_requested_values(
     assert "--team-id 136 --season 2025" in body
     # No stored team means no selector form to fill in.
     assert '<select id="team_id"' not in body
+    assert 'id="team-seasons-data"' not in body
+    assert "/static/js/season-selector.js" not in body
     assert_navigation(body, current=page, query="window=15")
 
     requested = client.get(f"{path}?team_id=147&season=2023&window=5")
@@ -414,6 +416,14 @@ def test_explicit_selection_is_reflected_in_the_form_and_navigation(
     assert response.status_code == 200
     body = response.text
     assert f'<form class="controls card" method="get" action="{path}">' in body
+    for field in ("team_id", "season", "window"):
+        assert f'<label for="{field}">' in body
+        assert f'<select id="{field}" name="{field}">' in body
+    assert '<img class="control__logo js-logo"' in body
+    assert 'alt=""' in body
+    assert 'id="team-seasons-data"' in body
+    assert "/static/js/season-selector.js" in body
+    assert '<button type="submit">Update chart</button>' in body
     assert f'<option value="{MARINERS_ID}" selected>{MARINERS_NAME}</option>' in body
     assert '<option value="2024" selected>2024</option>' in body
     assert '<option value="5" selected>5 Games</option>' in body

@@ -1,6 +1,6 @@
-{# Shared team/season/window controls. Both metric pages post to their own path
-   via form_action, so one selector serves both without a second selection
-   system. The route validates the team-season pair on every request. #}
+{# Team-only GET controls for team_id, season, and window. Each Team metric
+   supplies form_action; the Team-season catalog supports season-selector.js.
+   Routes validate the Team-season pair even without JavaScript. #}
 <script type="application/json" id="team-seasons-data">{{ team_seasons_catalog | tojson }}</script>
 
 <form class="controls card" method="get" action="{{ form_action }}">

@@ -33,7 +33,7 @@
       <pre class="command"><code>{{ import_command }}</code></pre>
     </section>
   {% else %}
-    {% include "_selector_form.html" %}
+    {% include "_team_selector_form.html" %}
 
     {% if state == "not_found" %}
       <section class="card notice">
@@ -65,15 +65,9 @@
         </div>
       </section>
 
-      <section class="summary summary--comparison" aria-label="Comparison summary statistics">
-        {% for card in summary_cards %}
-          <article class="card summary-card">
-            <p class="summary-card__label">{{ card.label }}</p>
-            <p class="summary-card__value">{{ card.value }}</p>
-            <p class="summary-card__caption">{{ card.caption }}</p>
-          </article>
-        {% endfor %}
-      </section>
+      {% with summary_class="summary summary--comparison", summary_label="Comparison summary statistics" %}
+        {% include "_summary_cards.html" %}
+      {% endwith %}
 
       <section class="about">
         <span class="about__icon" aria-hidden="true">
