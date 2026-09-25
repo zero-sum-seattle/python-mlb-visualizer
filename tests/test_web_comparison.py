@@ -286,6 +286,10 @@ def test_complete_coverage_renders_exact_rolling_indexes_and_four_summary_cards(
     assert traces[2]["y"] == pytest.approx([100.0, 100.0])
 
     cards = summary_card_values(body)
+    assert (
+        '<section class="summary summary--comparison" '
+        'aria-label="Comparison summary statistics">'
+    ) in body
     assert set(cards) == {
         "Recent Hits Index",
         "Recent K Index",

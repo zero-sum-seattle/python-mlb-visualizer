@@ -1,0 +1,9 @@
+<section class="{{ summary_class | default('summary') }}" aria-label="{{ summary_label | default('Summary statistics') }}">
+  {% for card in summary_cards %}
+    <article class="card summary-card">
+      <p class="summary-card__label">{{ card.label }}</p>
+      <p class="summary-card__value">{{ card.value }}</p>
+      <p class="summary-card__caption">{{ card.caption }}</p>
+    </article>
+  {% endfor %}
+</section>

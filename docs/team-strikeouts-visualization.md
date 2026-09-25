@@ -249,8 +249,8 @@ and their labels must stay distinct. A `GenericMetricEngine` would have to
 encode all of that as configuration.
 
 What *is* shared is genuinely shared infrastructure that already existed: the
-team-season selector (`app/web/selection.py`), the selector form partial
-(`_selector_form.html`), figure rendering, and date/matchup formatting.
+team-season selector (`app/web/selection.py`), the Team selector form partial
+(`_team_selector_form.html`), figure rendering, and date/matchup formatting.
 
 ## 10. Legacy null-data behavior
 
