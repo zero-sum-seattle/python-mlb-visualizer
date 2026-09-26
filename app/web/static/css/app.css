@@ -359,6 +359,62 @@ body {
   background: var(--navy-deep);
 }
 
+/* Player directory */
+
+.player-search {
+  width: 100%;
+  min-width: 0;
+  padding: 0.62rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.player-search:focus-visible,
+.player-results__list a:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.player-results__list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.8rem;
+}
+
+.player-results__list li {
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.player-results__list a {
+  color: var(--navy);
+  font-weight: 600;
+  text-underline-offset: 0.2em;
+}
+
+.player-results__list a:hover {
+  color: var(--teal);
+}
+
+.player-selection {
+  border-left: 4px solid var(--teal);
+}
+
+.player-selection p,
+.player-results p {
+  overflow-wrap: anywhere;
+}
+
+.player-directory-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 /* Chart */
 
 .chart-card {

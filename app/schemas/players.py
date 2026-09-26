@@ -7,6 +7,14 @@ import unicodedata
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+def normalize_player_name(name: str) -> str:
+    """Fold case and accents consistently for catalog ordering and search."""
+    decomposed = unicodedata.normalize("NFKD", name)
+    return "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    ).casefold()
+
+
 class PlayerIdentity(BaseModel):
     """A player's persisted identity fields.
 
@@ -36,13 +44,7 @@ class PlayerIdentity(BaseModel):
         the same order. ``full_name`` breaks ties between names that fold
         together (``Zoë`` and ``zoë``) and ``player_id`` makes the result total.
         """
-        decomposed = unicodedata.normalize("NFKD", self.full_name)
-        folded = "".join(
-            character
-            for character in decomposed
-            if not unicodedata.combining(character)
-        ).casefold()
-        return (folded, self.full_name, self.player_id)
+        return (normalize_player_name(self.full_name), self.full_name, self.player_id)
 
 
 class PlayerSeasonCatalogEntry(PlayerIdentity):
