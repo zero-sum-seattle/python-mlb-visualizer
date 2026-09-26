@@ -509,6 +509,25 @@ def get_player(session: Session, *, player_id: int) -> PlayerIdentity | None:
     return None if record is None else record.to_domain()
 
 
+def list_player_catalog_seasons(session: Session) -> list[int]:
+    """Return catalog membership seasons, newest first, independently of stats."""
+    stmt = (
+        select(PlayerSeasonCatalogRecord.season)
+        .distinct()
+        .order_by(PlayerSeasonCatalogRecord.season.desc())
+    )
+    try:
+        return list(session.scalars(stmt))
+    except OperationalError as exc:
+        message = str(exc.orig if exc.orig is not None else exc).lower()
+        if "no such table" not in message or "player_seasons" not in message:
+            raise
+        raise DatabaseSchemaMissingError(
+            "Table 'player_seasons' is missing. "
+            f"Apply migrations with: {MIGRATION_HINT}"
+        ) from exc
+
+
 def list_player_catalog(
     session: Session, *, season: int
 ) -> list[PlayerSeasonCatalogEntry]:

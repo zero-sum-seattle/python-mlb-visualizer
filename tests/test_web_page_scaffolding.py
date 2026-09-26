@@ -174,7 +174,8 @@ def assert_navigation(body: str, *, current: AnalyticsPage, query: str) -> None:
     navigation = NavigationParser(body)
     assert list(navigation.landmarks) == ["Primary", "Team analytics"]
     assert navigation.landmarks["Primary"] == [
-        {"label": "Teams", "href": f"/{suffix}", "current": "location"}
+        {"label": "Teams", "href": f"/{suffix}", "current": "location"},
+        {"label": "Players", "href": "/players", "current": ""},
     ]
     order = (
         "/",

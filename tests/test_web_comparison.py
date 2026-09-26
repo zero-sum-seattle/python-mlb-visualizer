@@ -351,9 +351,11 @@ def test_comparison_page_does_not_add_dead_mockup_controls(
     client: TestClient, seed: SeedFn, record_coverage: CoverageFn
 ) -> None:
     seed_exact_comparison(seed, record_coverage)
-    body = visible_text(comparison_response(client).text)
+    response = comparison_response(client)
+    body = visible_text(response.text)
 
-    for dead_control in ("7D", "30D", "60D", "Export", "Players"):
+    assert 'href="/players">Players</a>' in response.text
+    for dead_control in ("7D", "30D", "60D", "Export"):
         assert dead_control not in body
 
 

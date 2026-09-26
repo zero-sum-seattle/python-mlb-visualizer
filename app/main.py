@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import get_settings
 from app.database.engine import build_engine, build_session_factory
 from app.web.errors import create_validation_error_handler
+from app.web.player_routes import create_player_router
 from app.web.routes import create_router
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
         create_validation_error_handler(templates, settings),
     )
     application.include_router(create_router(templates, settings))
+    application.include_router(create_player_router(templates, settings))
     return application
 
 

@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Player Directory — {{ app_name }}{% endblock %}
+
+{% block primary_navigation %}
+  <a class="primary-nav__link" href="/">Teams</a>
+  <a class="primary-nav__link" href="/players" aria-current="location">Players</a>
+{% endblock %}
+
+{% block content %}
+  <section class="page-intro">
+    <h1>Player Directory</h1>
+    <p class="page-intro__subtitle">Find a player from the locally stored MLB catalog.</p>
+  </section>
+
+  {% if seasons %}
+    <form class="controls card" method="get" action="/players">
+      <div class="controls__fields">
+        <div class="control">
+          <label for="season">Season</label>
+          <select id="season" name="season">
+            {% if season not in seasons %}
+              <option value="{{ season }}" selected>{{ season }} — not stored</option>
+            {% endif %}
+            {% for stored_season in seasons %}
+              <option value="{{ stored_season }}"{% if stored_season == season %} selected{% endif %}>{{ stored_season }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="control">
+          <label for="q">Search player</label>
+          <input class="player-search" type="search" id="q" name="q" value="{{ q }}" placeholder="Full name or part of a name" />
+        </div>
+      </div>
+      <div class="controls__action"><button type="submit">Search</button></div>
+    </form>
+  {% endif %}
+
+  {% if schema_missing %}
+    <section class="card notice">
+      <h2>The database schema is not ready</h2>
+      <p>{{ message }}</p>
+      <pre class="command"><code>{{ migration_command }}</code></pre>
+    </section>
+  {% else %}
+    {% if not seasons %}
+      <section class="card notice">
+        <h2>No Player catalog is stored locally</h2>
+        {% if message %}<p>{{ message }}</p>{% endif %}
+        <p>Import a season's catalog from the command line, then reload this page.</p>
+        {% if season is none %}<p>Replace <code>&lt;season&gt;</code> with the season you want to import.</p>{% endif %}
+        <pre class="command"><code>{{ import_command }}</code></pre>
+      </section>
+    {% endif %}
+
+    {% if message and seasons %}
+      <section class="card notice">
+        <h2>That Player selection is not stored locally</h2>
+        <p>{{ message }}</p>
+        <p>Stored seasons: {{ seasons | join(', ') }}.</p>
+      </section>
+    {% endif %}
+
+    {% if selected_player %}
+      <section class="card notice player-selection" aria-labelledby="selected-player-heading">
+        <h2 id="selected-player-heading">Selected Player</h2>
+        <p>You selected <strong>{{ selected_player.full_name }}</strong> for the <strong>{{ season }}</strong> catalog.</p>
+        <p>Primary position: <strong>{{ selected_player.primary_position }}</strong></p>
+        <p class="player-directory-note">Position is the stored identity value, not a historical position for this season.</p>
+      </section>
+    {% endif %}
+
+    {% if season in seasons %}
+      <section class="card notice player-results" aria-labelledby="player-results-heading">
+        {% if has_search %}
+          <h2 id="player-results-heading">Search results</h2>
+          {% if results %}
+            <p>{{ result_count }} matching player{% if result_count != 1 %}s{% endif %} in the {{ season }} stored catalog.</p>
+            {% if result_count > result_limit %}
+              <p>Showing the first {{ result_limit }} results alphabetically. Refine your search to find a player.</p>
+            {% endif %}
+            <ul class="player-results__list">
+              {% for player in results %}
+                <li>
+                  {% if selected_player and selected_player.player_id == player.player_id %}
+                    <a href="{{ selection_links[player.player_id] }}" aria-current="true">{{ player.full_name }}</a>
+                    <span> — Selected</span>
+                  {% else %}
+                    <a href="{{ selection_links[player.player_id] }}">{{ player.full_name }}</a>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p>No players match “{{ q }}” in the {{ season }} stored catalog. Try another name or season.</p>
+          {% endif %}
+        {% else %}
+          <h2 id="player-results-heading">Find a player</h2>
+          <p>Search by full name or part of a name in the {{ season }} stored catalog. Capitalization and accents do not matter.</p>
+        {% endif %}
+        <p class="player-directory-note">Only locally stored catalog members are shown. This directory does not establish complete season coverage.</p>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}

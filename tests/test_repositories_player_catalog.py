@@ -4,10 +4,14 @@ from sqlalchemy.orm import Session
 
 from app.database.repositories import (
     list_player_catalog,
+    list_player_catalog_seasons,
+    upsert_player,
     upsert_player_catalog_entry,
+    upsert_player_season_hitting,
 )
 from app.schemas.ingestion import PlayerPersistenceOutcome
 from app.schemas.players import PlayerSeasonCatalogEntry
+from tests.test_repositories_players import make_hitting, make_identity
 
 
 def entry(
@@ -94,3 +98,31 @@ def test_catalog_ordering_ignores_case_and_accents(migrated_session: Session) ->
         "Ángel Martínez",
         "Zack Wheeler",
     ]
+
+
+def test_catalog_seasons_are_unique_newest_first_without_hitting(
+    migrated_session: Session,
+) -> None:
+    assert list_player_catalog_seasons(migrated_session) == []
+    for catalog_entry in [
+        entry(1, season=1999),
+        entry(2, season=2003),
+        entry(3, season=2003),
+        entry(1, season=2001),
+    ]:
+        upsert_player_catalog_entry(migrated_session, entry=catalog_entry)
+        migrated_session.flush()
+    migrated_session.commit()
+    assert list_player_catalog_seasons(migrated_session) == [2003, 2001, 1999]
+
+
+def test_hitting_rows_and_global_identities_do_not_supply_catalog_seasons(
+    migrated_session: Session,
+) -> None:
+    upsert_player(migrated_session, identity=make_identity())
+    upsert_player_season_hitting(migrated_session, hitting=make_hitting())
+    migrated_session.commit()
+    assert list_player_catalog_seasons(migrated_session) == []
+    upsert_player_catalog_entry(migrated_session, entry=entry(season=2001))
+    migrated_session.commit()
+    assert list_player_catalog_seasons(migrated_session) == [2001]
