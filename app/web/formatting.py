@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.schemas.analytics import (
+    PlayerHittingOverview,
     TeamBaserunnersAnalysis,
     TeamBaserunnersLeagueComparison,
     TeamHitsAllowedAnalysis,
@@ -39,6 +40,9 @@ LEAGUE_PITCHING_UNAVAILABLE_NOTE = (
 )
 NORMALIZED_INDEX_CAPTION = "MLB Avg = 100"
 NO_LEAGUE_COMPARISON_VALUE = "—"
+# A rate with a zero denominator. Its card caption always says why, so the dash
+# cannot be read as a real ``.000``.
+UNDEFINED_RATE_VALUE = "—"
 NO_LEAGUE_COMPARISON_CAPTION = "Comparison unavailable"
 LEAGUE_COMPARISON_UNAVAILABLE_NOTE = (
     "MLB comparison unavailable. A complete league-season import is "
@@ -576,6 +580,18 @@ def format_win_pct(value: float) -> str:
     or winless season is written ``1.000`` and ``.000``, so the leading digit
     is kept only when it is not a zero.
     """
+    return _format_three_decimal_rate(value)
+
+
+def format_batting_rate(value: float) -> str:
+    """Render AVG, OBP, SLG, or OPS the way a box score does: ``.300``.
+
+    OPS routinely passes one and keeps its leading digit, as in ``1.024``.
+    """
+    return _format_three_decimal_rate(value)
+
+
+def _format_three_decimal_rate(value: float) -> str:
     rendered = f"{value:.3f}"
     return rendered[1:] if rendered.startswith("0.") else rendered
 
@@ -855,3 +871,101 @@ def format_hits_allowed_direction_sentence(
         f"{team_name}'s pitchers allowed {abs(difference):.2f} {direction} hits "
         f"per game than MLB overall across the stored season."
     )
+
+
+def format_plate_appearance_rate(value: float) -> str:
+    """Render a share of plate appearances, such as K%, to one decimal."""
+    return f"{value:.1%}"
+
+
+def build_player_hitting_rate_cards(
+    overview: PlayerHittingOverview,
+) -> list[SummaryCard]:
+    """Build the AVG, OBP, SLG, and OPS cards for one player-season.
+
+    An undefined rate is shown as ``—`` with a caption naming the missing
+    denominator, never as ``.000``.
+    """
+    line = overview.hitting
+    at_bats_caption = (
+        f"{line.hits:,} H in {line.at_bats:,} AB"
+        if overview.batting_average is not None
+        else "Undefined: no at-bats"
+    )
+    return [
+        SummaryCard(
+            label="AVG",
+            value=_format_optional_batting_rate(overview.batting_average),
+            caption=at_bats_caption,
+        ),
+        SummaryCard(
+            label="OBP",
+            value=_format_optional_batting_rate(overview.on_base_percentage),
+            caption=(
+                "On-base percentage"
+                if overview.on_base_percentage is not None
+                else "Undefined: no AB, BB, HBP, or SF"
+            ),
+        ),
+        SummaryCard(
+            label="SLG",
+            value=_format_optional_batting_rate(overview.slugging_percentage),
+            caption=(
+                f"{overview.total_bases:,} TB in {line.at_bats:,} AB"
+                if overview.slugging_percentage is not None
+                else "Undefined: no at-bats"
+            ),
+        ),
+        SummaryCard(
+            label="OPS",
+            value=_format_optional_batting_rate(overview.on_base_plus_slugging),
+            caption=(
+                "OBP + SLG"
+                if overview.on_base_plus_slugging is not None
+                else "Undefined: needs OBP and SLG"
+            ),
+        ),
+    ]
+
+
+def build_player_hitting_total_cards(
+    overview: PlayerHittingOverview,
+) -> list[SummaryCard]:
+    """Build the season counting-stat cards, exactly as stored."""
+    line = overview.hitting
+    return [
+        SummaryCard(
+            label="Games",
+            value=f"{line.games_played:,}",
+            caption="Games played",
+        ),
+        SummaryCard(
+            label="Plate Appearances",
+            value=f"{line.plate_appearances:,}",
+            caption=f"{line.at_bats:,} at-bats",
+        ),
+        SummaryCard(
+            label="Home Runs",
+            value=f"{line.home_runs:,}",
+            caption="Season total",
+        ),
+        SummaryCard(
+            label="Walks",
+            value=f"{line.base_on_balls:,}",
+            caption=f"Includes {line.intentional_walks:,} intentional",
+        ),
+        SummaryCard(
+            label="Strikeouts",
+            value=f"{line.strikeouts:,}",
+            caption="Batting strikeouts",
+        ),
+        SummaryCard(
+            label="Stolen Bases",
+            value=f"{line.stolen_bases:,}",
+            caption=f"{line.caught_stealing:,} caught stealing",
+        ),
+    ]
+
+
+def _format_optional_batting_rate(value: float | None) -> str:
+    return UNDEFINED_RATE_VALUE if value is None else format_batting_rate(value)

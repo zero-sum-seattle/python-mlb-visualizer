@@ -1,4 +1,4 @@
-"""Schemas for calculated team hitting analytics.
+"""Schemas for calculated team and player analytics.
 
 These models are the contract between the analytics layer and everything that
 presents it. They carry finished numbers, not raw MLB payloads, and they keep
@@ -8,6 +8,9 @@ Hits, batting strikeouts, runs, and baserunners are modelled separately rather
 than through a shared metric type. They are read the same way but mean
 different things, and honest duplication is cheaper to follow than an
 abstraction covering four cases.
+
+Player models describe one stored season aggregate rather than a game-by-game
+trend, so they carry no chart points, rolling windows, or league context.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from math import isclose
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.games import HomeAway
+from app.schemas.players import PlayerSeasonHitting
 
 
 def _validate_prior_window_pair(
@@ -1674,5 +1678,174 @@ class TeamHitsAllowedLeagueComparison(BaseModel):
             raise ValueError(
                 f"difference_vs_mlb ({self.difference_vs_mlb}) must equal "
                 f"team_hits_allowed_per_game - league.hits_per_game ({expected})"
+            )
+        return self
+
+
+def _validate_optional_ratio(
+    name: str,
+    value: float | None,
+    *,
+    numerator: int,
+    denominator: int,
+) -> None:
+    """Require a rate to equal its components, and be None only at zero.
+
+    An undefined rate and a real ``.000`` rate mean different things, so a zero
+    denominator must produce None and a non-zero one must produce the ratio.
+    """
+    if denominator == 0:
+        if value is not None:
+            raise ValueError(f"{name} must be None when its denominator is zero")
+        return
+    expected = numerator / denominator
+    if value is None or not isclose(value, expected, rel_tol=1e-9, abs_tol=1e-9):
+        raise ValueError(
+            f"{name} ({value}) must equal {numerator} / {denominator} ({expected})"
+        )
+
+
+class PlayerPlateAppearanceRates(BaseModel):
+    """Share of a player's plate appearances ending in three outcomes.
+
+    All three rates share ``plate_appearances`` as their denominator, which is
+    why they are grouped: they describe how the player's stored season
+    outcomes were composed, not how good those outcomes were. The model only
+    exists when the player had at least one plate appearance.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    plate_appearances: int = Field(gt=0, description="The shared denominator.")
+    strikeouts: int = Field(ge=0, description="Batting strikeouts.")
+    base_on_balls: int = Field(ge=0, description="Walks, including intentional.")
+    home_runs: int = Field(ge=0, description="Home runs.")
+    strikeout_rate: float = Field(
+        ge=0, le=1, description="K%: strikeouts / plate_appearances."
+    )
+    walk_rate: float = Field(
+        ge=0, le=1, description="BB%: base_on_balls / plate_appearances."
+    )
+    home_run_rate: float = Field(
+        ge=0, le=1, description="HR%: home_runs / plate_appearances."
+    )
+
+    @model_validator(mode="after")
+    def _rates_match_their_components(self) -> PlayerPlateAppearanceRates:
+        for name, numerator in (
+            ("strikeout_rate", self.strikeouts),
+            ("walk_rate", self.base_on_balls),
+            ("home_run_rate", self.home_runs),
+        ):
+            _validate_optional_ratio(
+                name,
+                getattr(self, name),
+                numerator=numerator,
+                denominator=self.plate_appearances,
+            )
+        return self
+
+
+class PlayerHittingOverview(BaseModel):
+    """One player's stored season hitting aggregate with its derived rates.
+
+    The stored season aggregate is carried unchanged beside the rates derived
+    from it, and the validators below prove the two agree. Each rate is None
+    exactly when its denominator is zero, never ``0.0``. OPS is None whenever
+    either OBP or SLG is.
+
+    This is the season aggregate as currently stored, which for an in-progress
+    season is the total at the most recent import rather than a completed
+    season. It is not a trend, does not compare the player with MLB, and says
+    nothing about which club or clubs the player played for.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    hitting: PlayerSeasonHitting
+    total_bases: int = Field(ge=0, description="H + 2B + 2 * 3B + 3 * HR.")
+    batting_average: float | None = Field(
+        ge=0, le=1, description="AVG: hits / at_bats, or None with no at-bats."
+    )
+    on_base_percentage: float | None = Field(
+        ge=0,
+        le=1,
+        description="OBP: (H + BB + HBP) / (AB + BB + HBP + SF), or None when "
+        "that denominator is zero.",
+    )
+    slugging_percentage: float | None = Field(
+        ge=0, le=4, description="SLG: total_bases / at_bats, or None with no at-bats."
+    )
+    on_base_plus_slugging: float | None = Field(
+        ge=0, le=5, description="OPS: OBP + SLG, or None when either is None."
+    )
+    plate_appearance_rates: PlayerPlateAppearanceRates | None = Field(
+        description="K%, BB%, and HR%, or None with no plate appearances."
+    )
+
+    @model_validator(mode="after")
+    def _rates_match_the_stored_line(self) -> PlayerHittingOverview:
+        line = self.hitting
+        expected_total_bases = (
+            line.hits + line.doubles + 2 * line.triples + 3 * line.home_runs
+        )
+        if self.total_bases != expected_total_bases:
+            raise ValueError(
+                f"total_bases ({self.total_bases}) must equal H + 2B + 2 * 3B + "
+                f"3 * HR ({expected_total_bases})"
+            )
+        _validate_optional_ratio(
+            "batting_average",
+            self.batting_average,
+            numerator=line.hits,
+            denominator=line.at_bats,
+        )
+        _validate_optional_ratio(
+            "on_base_percentage",
+            self.on_base_percentage,
+            numerator=line.hits + line.base_on_balls + line.hit_by_pitch,
+            denominator=(
+                line.at_bats + line.base_on_balls + line.hit_by_pitch + line.sac_flies
+            ),
+        )
+        _validate_optional_ratio(
+            "slugging_percentage",
+            self.slugging_percentage,
+            numerator=self.total_bases,
+            denominator=line.at_bats,
+        )
+        if self.on_base_percentage is None or self.slugging_percentage is None:
+            if self.on_base_plus_slugging is not None:
+                raise ValueError(
+                    "on_base_plus_slugging must be None when OBP or SLG is None"
+                )
+        else:
+            expected_ops = self.on_base_percentage + self.slugging_percentage
+            if self.on_base_plus_slugging is None or not isclose(
+                self.on_base_plus_slugging, expected_ops, rel_tol=1e-9, abs_tol=1e-9
+            ):
+                raise ValueError(
+                    f"on_base_plus_slugging ({self.on_base_plus_slugging}) must "
+                    f"equal OBP + SLG ({expected_ops})"
+                )
+        rates = self.plate_appearance_rates
+        if (rates is None) != (line.plate_appearances == 0):
+            raise ValueError(
+                "plate_appearance_rates must be present exactly when "
+                "plate_appearances is non-zero"
+            )
+        if rates is not None and (
+            rates.plate_appearances,
+            rates.strikeouts,
+            rates.base_on_balls,
+            rates.home_runs,
+        ) != (
+            line.plate_appearances,
+            line.strikeouts,
+            line.base_on_balls,
+            line.home_runs,
+        ):
+            raise ValueError(
+                "plate_appearance_rates components must match the stored line"
             )
         return self
