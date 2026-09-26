@@ -1,4 +1,4 @@
-"""Plotly figure construction for team analytics visualizations.
+"""Plotly figure construction for team and player analytics visualizations.
 
 Kept out of the route so the figure contract can be tested without HTTP and so
 the route stays about request handling.
@@ -18,6 +18,7 @@ from plotly.offline import get_plotlyjs
 
 from app.analytics.team_pitching import build_pitch_count_points
 from app.schemas.analytics import (
+    PlayerPlateAppearanceRates,
     TeamBaserunnersAnalysis,
     TeamBaserunnersLeagueComparison,
     TeamHitsAllowedAnalysis,
@@ -33,7 +34,12 @@ from app.schemas.analytics import (
     TeamStrikeoutsAnalysis,
     TeamStrikeoutsLeagueComparison,
 )
-from app.web.formatting import format_long_date, format_matchup, format_short_date
+from app.web.formatting import (
+    format_long_date,
+    format_matchup,
+    format_plate_appearance_rate,
+    format_short_date,
+)
 
 CHART_DIV_ID = "team-hits-chart"
 RAW_HITS_TRACE_NAME = "Game Hits"
@@ -79,6 +85,9 @@ HITS_INDEX_TRACE_NAME = "Hits Index"
 STRIKEOUTS_INDEX_TRACE_NAME = "Batting Strikeout Index"
 NORMALIZED_BASELINE_TRACE_NAME = "Baseline (100)"
 COMPARISON_Y_AXIS_TITLE = "Normalized Index (MLB Avg = 100)"
+
+PLAYER_PA_RATES_CHART_DIV_ID = "player-plate-appearance-rates-chart"
+PLAYER_PA_RATES_X_AXIS_TITLE = "Percentage of Plate Appearances"
 
 _NAVY = "#12263f"
 _TEAL = "#0f8b8d"
@@ -1111,6 +1120,86 @@ def build_team_hitting_comparison_figure(
             # Normalized values usually cluster around 100. Autorange keeps
             # their movement legible instead of forcing an unrelated zero.
             "tickformat": ".0f",
+            "automargin": True,
+        },
+    )
+    return figure
+
+
+def build_player_plate_appearance_rates_figure(
+    rates: PlayerPlateAppearanceRates,
+) -> go.Figure:
+    """Build the K%, BB%, and HR% bars for one player-season.
+
+    The three bars share one denominator, plate appearances, so their lengths
+    are directly comparable. One colour is used for all three: a strikeout is
+    not styled as bad or a walk as good, and there is no MLB reference line.
+    The chart describes how the stored season's outcomes were composed.
+    """
+    bars = (
+        ("K%", "Strikeouts", rates.strikeouts, rates.strikeout_rate),
+        ("BB%", "Walks", rates.base_on_balls, rates.walk_rate),
+        ("HR%", "Home runs", rates.home_runs, rates.home_run_rate),
+    )
+    labels = [label for label, _, _, _ in bars]
+    values = [value for _, _, _, value in bars]
+    hover_data = [
+        (name, f"{count:,}", f"{rates.plate_appearances:,}")
+        for _, name, count, _ in bars
+    ]
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Bar(
+            x=values,
+            y=labels,
+            orientation="h",
+            marker={"color": _TEAL},
+            text=[format_plate_appearance_rate(value) for value in values],
+            textposition="outside",
+            cliponaxis=False,
+            textfont={"size": 13, "color": _NAVY},
+            customdata=hover_data,
+            hovertemplate=(
+                "<b>%{y}: %{x:.1%}</b><br>"
+                "%{customdata[0]}: %{customdata[1]} of "
+                "%{customdata[2]} PA<extra></extra>"
+            ),
+            showlegend=False,
+        )
+    )
+    # Headroom for the outside value labels without implying a scale maximum.
+    upper = max(max(values) * 1.2, 0.05)
+    figure.update_layout(
+        template="plotly_white",
+        margin={"l": 8, "r": 16, "t": 8, "b": 8},
+        height=240,
+        hovermode="closest",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "system-ui, -apple-system, 'Segoe UI', sans-serif", "size": 13},
+        bargap=0.35,
+        xaxis={
+            "title": {
+                "text": PLAYER_PA_RATES_X_AXIS_TITLE,
+                "standoff": 10,
+                "font": _AXIS_TITLE_FONT,
+            },
+            "tickfont": _TICK_FONT,
+            "tickformat": ".0%",
+            "range": [0, upper],
+            "gridcolor": _GRID,
+            "griddash": "dot",
+            "zeroline": False,
+            "showline": True,
+            "linecolor": _AXIS_LINE,
+            "automargin": True,
+        },
+        yaxis={
+            # K% first, reading top to bottom in the order the page lists them.
+            "autorange": "reversed",
+            "tickfont": {"size": 13, "color": _NAVY},
+            "showgrid": False,
             "automargin": True,
         },
     )

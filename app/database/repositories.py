@@ -528,6 +528,46 @@ def list_player_catalog_seasons(session: Session) -> list[int]:
         ) from exc
 
 
+def get_player_catalog_entry(
+    session: Session,
+    *,
+    player_id: int,
+    season: int,
+) -> PlayerSeasonCatalogEntry | None:
+    """Return one player's catalog membership for one season, or None.
+
+    Membership comes from ``player_seasons`` alone. A stored identity or a
+    stored hitting row does not by itself place a player in a season.
+    """
+    stmt = (
+        select(PlayerSeasonCatalogRecord, PlayerRecord)
+        .join(
+            PlayerRecord,
+            PlayerRecord.player_id == PlayerSeasonCatalogRecord.player_id,
+        )
+        .where(
+            PlayerSeasonCatalogRecord.player_id == player_id,
+            PlayerSeasonCatalogRecord.season == season,
+        )
+    )
+    try:
+        row = session.execute(stmt).one_or_none()
+    except OperationalError as exc:
+        message = str(exc.orig if exc.orig is not None else exc).lower()
+        if "no such table" not in message or not (
+            "player_seasons" in message or "players" in message
+        ):
+            raise
+        raise DatabaseSchemaMissingError(
+            "Player catalog tables are missing. "
+            f"Apply migrations with: {MIGRATION_HINT}"
+        ) from exc
+    if row is None:
+        return None
+    membership, player = row
+    return membership.to_domain(player.to_domain())
+
+
 def list_player_catalog(
     session: Session, *, season: int
 ) -> list[PlayerSeasonCatalogEntry]:

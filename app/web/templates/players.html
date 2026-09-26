@@ -1,11 +1,6 @@
-{% extends "base.html" %}
+{% extends "player_base.html" %}
 
 {% block title %}Player Directory — {{ app_name }}{% endblock %}
-
-{% block primary_navigation %}
-  <a class="primary-nav__link" href="/">Teams</a>
-  <a class="primary-nav__link" href="/players" aria-current="location">Players</a>
-{% endblock %}
 
 {% block content %}
   <section class="page-intro">
@@ -67,6 +62,12 @@
         <p>You selected <strong>{{ selected_player.full_name }}</strong> for the <strong>{{ season }}</strong> catalog.</p>
         <p>Primary position: <strong>{{ selected_player.primary_position }}</strong></p>
         <p class="player-directory-note">Position is the stored identity value, not a historical position for this season.</p>
+        {% if hitting_overview_url %}
+          <p><a class="player-link" href="{{ hitting_overview_url }}">View Hitting Overview</a></p>
+        {% else %}
+          <p>No {{ season }} hitting line is stored locally for this Player. Import it with:</p>
+          <pre class="command"><code>{{ player_season_import_command }}</code></pre>
+        {% endif %}
       </section>
     {% endif %}
 

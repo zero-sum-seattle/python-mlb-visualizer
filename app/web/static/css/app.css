@@ -415,6 +415,33 @@ body {
   font-size: 0.85rem;
 }
 
+/* Player hitting overview */
+
+.player-back {
+  margin: 0;
+}
+
+.player-link {
+  color: var(--teal-dark);
+  font-weight: 600;
+}
+
+.player-link:hover {
+  color: var(--teal);
+}
+
+.player-link:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.player-section-heading {
+  margin: 0.25rem 0 -0.5rem;
+  font-size: 1.1rem;
+  color: var(--navy);
+}
+
 /* Chart */
 
 .chart-card {
@@ -457,7 +484,8 @@ body {
 /* The normalized chart is intentionally composed for a phone-sized plot. Its
    three aggregate traces stay legible without forcing the internal horizontal
    scroller used by the denser game-level charts. */
-.chart-card__figure--comparison .plotly-graph-div {
+.chart-card__figure--comparison .plotly-graph-div,
+.chart-card__figure--player-rates .plotly-graph-div {
   min-width: 0;
 }
 
@@ -467,6 +495,10 @@ body {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
+}
+
+.summary--player-totals {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .summary-card {
@@ -685,6 +717,11 @@ body {
 
   .summary {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Short counts and three-digit rates fit two to a row on a phone. */
+  .summary--player-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   /* The comparison values are compact indexes. Keeping them in a two-by-two

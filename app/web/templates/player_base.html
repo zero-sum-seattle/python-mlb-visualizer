@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{# Players is the current domain on every Player page. There is no secondary
+   Player navigation: each Player page needs a selected Player-season, so a
+   global link to it would have nowhere real to go. #}
+{% block primary_navigation %}
+  <a class="primary-nav__link" href="/">Teams</a>
+  <a class="primary-nav__link" href="/players" aria-current="location">Players</a>
+{% endblock %}
