@@ -4,10 +4,12 @@ Answers one question:
 
     What did this player's overall offensive season look like?
 
-The input is one stored full-season aggregate, not a list of games, so this is
-a single calculation rather than a trend: no rolling windows, no chart points,
-and no comparison with MLB. A player who played for more than one club is
-described by the combined season line; which clubs those were is not modelled.
+The input is one stored season aggregate, not a list of games, so this is a
+single calculation rather than a trend: no rolling windows, no chart points,
+and no comparison with MLB. For an in-progress season the aggregate reflects
+the most recent import, and nothing here implies the season is complete. A
+player who played for more than one club is described by the combined season
+aggregate; the individual team stints are not modelled.
 
 Every rate is a ratio of season totals. A rate whose denominator is zero is
 undefined and returned as ``None``, never ``0.0``: a player with no at-bats did
@@ -44,14 +46,10 @@ def build_player_hitting_overview(
     Raises
     ------
     PlayerHittingAnalysisError
-        The line records more hits than at-bats, which no real season can.
+        The line records more of an outcome than the plate appearances or
+        at-bats that contain it, which no real season can.
     """
-    if hitting.hits > hitting.at_bats:
-        raise PlayerHittingAnalysisError(
-            f"Player {hitting.player_id}'s stored {hitting.season} hitting line "
-            f"records {hitting.hits} hits in {hitting.at_bats} at-bats; hits "
-            "cannot exceed at-bats"
-        )
+    _require_subset_counts(hitting)
 
     total_bases = (
         hitting.hits + hitting.doubles + 2 * hitting.triples + 3 * hitting.home_runs
@@ -80,6 +78,34 @@ def build_player_hitting_overview(
         on_base_plus_slugging=on_base_plus_slugging,
         plate_appearance_rates=_plate_appearance_rates(hitting),
     )
+
+
+def _require_subset_counts(hitting: PlayerSeasonHitting) -> None:
+    """Reject a line whose numerators exceed the totals that contain them.
+
+    ``PlayerSeasonHitting`` does not prove these relationships, and each one
+    bounds a rate derived here. Checking them explicitly turns a corrupted
+    stored row into a named data-integrity error rather than a schema failure
+    while constructing the analysis. A batting strikeout always ends an
+    at-bat, so it is bounded by at-bats as well as plate appearances.
+
+    Plate-appearance bounds are checked first so the error names the rate
+    denominator that was actually exceeded.
+    """
+    plate_appearances = hitting.plate_appearances
+    for count, count_name, total, total_name in (
+        (hitting.strikeouts, "strikeouts", plate_appearances, "plate appearances"),
+        (hitting.base_on_balls, "walks", plate_appearances, "plate appearances"),
+        (hitting.home_runs, "home runs", plate_appearances, "plate appearances"),
+        (hitting.hits, "hits", hitting.at_bats, "at-bats"),
+        (hitting.strikeouts, "strikeouts", hitting.at_bats, "at-bats"),
+    ):
+        if count > total:
+            raise PlayerHittingAnalysisError(
+                f"Player {hitting.player_id}'s stored {hitting.season} hitting "
+                f"line records {count} {count_name} in {total} {total_name}; "
+                f"{count_name} cannot exceed {total_name}"
+            )
 
 
 def _plate_appearance_rates(

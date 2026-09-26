@@ -24,8 +24,8 @@
     {% if player %}
       <h1>{{ player.full_name }} — {{ season }} Hitting</h1>
       <p class="page-intro__subtitle">
-        Season overview: the player's full {{ season }} hitting line as stored
-        locally, not a game-by-game trend.
+        Season overview: the stored {{ season }} season aggregate, not a
+        game-by-game trend.
       </p>
     {% else %}
       <h1>Player Hitting Overview</h1>
@@ -102,10 +102,15 @@
       <div class="about__body">
         <h2>About this overview</h2>
         <p>
-          These figures describe {{ player.full_name }}'s full {{ season }}
-          season as one combined line. If the player appeared for more than one
-          club, their totals are combined here; this page does not show which
-          clubs those were.
+          These figures describe {{ player.full_name }}'s {{ season }} season
+          aggregate currently stored locally. For an in-progress season, they
+          reflect the data available at the most recent import and do not imply
+          the season is complete.
+        </p>
+        <p>
+          If the player appeared for more than one club, the stored line is the
+          combined season aggregate; this page does not model the individual
+          team stints.
         </p>
         <p>
           AVG is hits per at-bat. OBP is (H + BB + HBP) / (AB + BB + HBP + SF).

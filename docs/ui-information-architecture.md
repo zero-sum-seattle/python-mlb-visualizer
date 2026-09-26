@@ -65,7 +65,9 @@ Issue #57 adds the first Player analytics page:
 ```
 
 It answers *what did this player's overall offensive season look like?* from
-one stored full-season aggregate in `player_season_hitting`. It is not a
+one stored season aggregate in `player_season_hitting`. Because an in-progress
+season can be re-imported as its totals grow, the page describes the aggregate
+as of the most recent import and never calls the season complete. It is not a
 game-by-game trend, a projection, or a comparison with MLB; none of those exist
 for Players yet. AVG, OBP, SLG, OPS, and the K%/BB%/HR% plate-appearance rate
 profile are derived in `app/analytics/player_hitting.py` and never persisted.
@@ -77,8 +79,8 @@ data-unavailable state with the `import_player_season.py` command, because the
 selection is valid and only the analytics are absent; nothing is shown as zero.
 A rate with a zero denominator renders as `—` with its reason, never `.000`.
 
-A multi-club season is one combined line. No historical team-stint model exists,
-so the page names no club. Primary position is the stored identity value, not a
+A multi-club season is one combined aggregate. No historical team-stint model
+exists, so the page names no club. Primary position is the stored identity value, not a
 historical season attribute. Browser requests remain DB-only.
 
 The page links back to `/players?season=…&player_id=…` with that Player still

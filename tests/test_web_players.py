@@ -406,7 +406,10 @@ def test_overview_renders_stored_season_line(client: TestClient) -> None:
         "Stolen Bases": "10",
     }
     assert "246 TB in 500 AB" in body
-    assert "not a game-by-game trend" in prose(body)
+    assert "the stored 2003 season aggregate, not a game-by-game trend" in prose(body)
+    assert "do not imply the season is complete" in prose(body)
+    for completeness_claim in ("full 2003", "full-season", "complete season", "final"):
+        assert completeness_claim not in prose(body).lower()
     assert "not a historical position for 2003" in prose(body)
     assert_player_navigation(body)
     assert "team-nav" not in body
@@ -431,7 +434,10 @@ def test_overview_chart_is_a_local_plate_appearance_profile(
 @pytest.mark.usefixtures("stored_hitting")
 def test_overview_makes_no_team_or_comparison_claims(client: TestClient) -> None:
     body = client.get(HITTING_URL).text
-    assert "combined here; this page does not show which clubs" in prose(body)
+    assert (
+        "the stored line is the combined season aggregate; this page does not "
+        "model the individual team stints"
+    ) in prose(body)
     for absent in ('name="team_id"', "team_id=", "vs MLB", "Mariners"):
         assert absent not in body
 
@@ -568,6 +574,26 @@ def test_self_contradicting_hitting_row_is_a_conflict(
     assert "150 hits in 100 at-bats" in response.text
     assert "summary-card" not in response.text
     assert "Traceback" not in response.text
+
+
+@pytest.mark.usefixtures("catalog")
+def test_strikeouts_over_plate_appearances_is_a_conflict_not_a_500(
+    client: TestClient, migrated_session: Session
+) -> None:
+    """Regression: this row once reached the K% schema bound and escaped as a
+    Pydantic ValidationError instead of the route's 409 state."""
+    upsert_player_season_hitting(
+        migrated_session, hitting=make_hitting(season=2003, strikeouts=601)
+    )
+    migrated_session.commit()
+    response = client.get(HITTING_URL)
+    assert response.status_code == 409
+    assert "601 strikeouts in 600 plate appearances" in response.text
+    assert "The stored 2003 hitting line cannot be summarized" in response.text
+    assert "summary-card" not in response.text
+    assert "plotly" not in response.text
+    assert "Traceback" not in response.text
+    assert "ValidationError" not in response.text
 
 
 @pytest.mark.parametrize(

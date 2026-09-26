@@ -12,7 +12,7 @@ from app.analytics.player_hitting import (
     PlayerHittingAnalysisError,
     build_player_hitting_overview,
 )
-from app.schemas.analytics import PlayerHittingOverview
+from app.schemas.analytics import PlayerHittingOverview, PlayerPlateAppearanceRates
 from tests.test_repositories_players import make_hitting
 
 NO_PLATE_APPEARANCES = {
@@ -149,6 +149,63 @@ def test_more_hits_than_at_bats_is_a_data_integrity_error() -> None:
     )
     with pytest.raises(PlayerHittingAnalysisError, match="5 hits in 3 at-bats"):
         build_player_hitting_overview(hitting)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"strikeouts": 601},
+            "Player 677594's stored 2025 hitting line records 601 strikeouts in "
+            "600 plate appearances; strikeouts cannot exceed plate appearances",
+        ),
+        (
+            {"base_on_balls": 601},
+            "records 601 walks in 600 plate appearances; walks cannot exceed "
+            "plate appearances",
+        ),
+        (
+            # The schema requires home runs <= hits, so the row is also over
+            # at-bats; the plate-appearance bound is still the one reported.
+            {
+                **NO_PLATE_APPEARANCES,
+                "plate_appearances": 2,
+                "at_bats": 2,
+                "hits": 3,
+                "home_runs": 3,
+            },
+            "records 3 home runs in 2 plate appearances; home runs cannot exceed "
+            "plate appearances",
+        ),
+        (
+            {"strikeouts": 501},
+            "records 501 strikeouts in 500 at-bats; strikeouts cannot exceed at-bats",
+        ),
+    ],
+    ids=["so-over-pa", "bb-over-pa", "hr-over-pa", "so-over-ab"],
+)
+def test_counts_over_their_denominator_are_data_integrity_errors(
+    overrides: dict[str, int], message: str
+) -> None:
+    """A corrupted row must raise the analytics error the route handles,
+    never a schema ValidationError from building the rate models."""
+    hitting = make_hitting(**overrides)
+    with pytest.raises(PlayerHittingAnalysisError) as raised:
+        build_player_hitting_overview(hitting)
+    assert message in str(raised.value)
+
+
+def test_rate_schema_remains_a_second_integrity_boundary() -> None:
+    with pytest.raises(ValidationError, match="strikeout_rate"):
+        PlayerPlateAppearanceRates(
+            plate_appearances=600,
+            strikeouts=601,
+            base_on_balls=0,
+            home_runs=0,
+            strikeout_rate=601 / 600,
+            walk_rate=0.0,
+            home_run_rate=0.0,
+        )
 
 
 class TestOverviewSchema:

@@ -181,7 +181,7 @@ def create_player_router(templates: Jinja2Templates, settings: Settings) -> APIR
         season: Annotated[int, Query(gt=0)],
         player_id: Annotated[int, Query(gt=0)],
     ) -> Response:
-        """Render one Player's full-season hitting line from stored data only."""
+        """Render one Player's stored season hitting line from the database only."""
         context: dict[str, object] = {
             "app_name": settings.app_name,
             "mlb_logo_url": MLB_LOGO_URL,

@@ -9,7 +9,7 @@ than through a shared metric type. They are read the same way but mean
 different things, and honest duplication is cheaper to follow than an
 abstraction covering four cases.
 
-Player models describe one full-season aggregate rather than a game-by-game
+Player models describe one stored season aggregate rather than a game-by-game
 trend, so they carry no chart points, rolling windows, or league context.
 """
 
@@ -1747,15 +1747,17 @@ class PlayerPlateAppearanceRates(BaseModel):
 
 
 class PlayerHittingOverview(BaseModel):
-    """One player's full-season hitting line with its derived rates.
+    """One player's stored season hitting aggregate with its derived rates.
 
     The stored season aggregate is carried unchanged beside the rates derived
     from it, and the validators below prove the two agree. Each rate is None
     exactly when its denominator is zero, never ``0.0``. OPS is None whenever
     either OBP or SLG is.
 
-    This is a season total. It is not a trend, does not compare the player with
-    MLB, and says nothing about which club or clubs the player played for.
+    This is the season aggregate as currently stored, which for an in-progress
+    season is the total at the most recent import rather than a completed
+    season. It is not a trend, does not compare the player with MLB, and says
+    nothing about which club or clubs the player played for.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
