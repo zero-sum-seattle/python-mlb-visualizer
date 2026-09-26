@@ -1,0 +1,129 @@
+{% extends "player_base.html" %}
+
+{% block title %}
+  {%- if player -%}
+    {{ player.full_name }} — {{ season }} Hitting
+  {%- else -%}
+    Player Hitting Overview
+  {%- endif %} — {{ app_name }}
+{% endblock %}
+
+{% block head %}
+  {# plotly.js must be parsed before the figure div's inline bootstrap script. #}
+  {% if chart_html %}
+    <script src="{{ plotly_bundle_path }}"></script>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <p class="player-back">
+    <a class="player-link" href="{{ directory_url }}">← Back to Player Directory</a>
+  </p>
+
+  <section class="page-intro">
+    {% if player %}
+      <h1>{{ player.full_name }} — {{ season }} Hitting</h1>
+      <p class="page-intro__subtitle">
+        Season overview: the player's full {{ season }} hitting line as stored
+        locally, not a game-by-game trend.
+      </p>
+    {% else %}
+      <h1>Player Hitting Overview</h1>
+      <p class="page-intro__subtitle">A season-level hitting line for one stored Player.</p>
+    {% endif %}
+  </section>
+
+  {% if state == "schema_missing" %}
+    <section class="card notice">
+      <h2>The database schema is not ready</h2>
+      <p>{{ message }}</p>
+      <pre class="command"><code>{{ migration_command }}</code></pre>
+    </section>
+  {% elif state == "not_found" %}
+    <section class="card notice">
+      <h2>That Player selection is not stored locally</h2>
+      <p>{{ message }}</p>
+      <p>Find a Player in a stored season from the <a class="player-link" href="/players">Player Directory</a>.</p>
+    </section>
+  {% elif state == "missing_hitting" %}
+    <section class="card notice">
+      <h2>No {{ season }} hitting line is stored for {{ player.full_name }}</h2>
+      <p>
+        {{ player.full_name }} is in the stored {{ season }} Player catalog, but
+        their season hitting statistics have not been imported. Nothing is
+        shown rather than treating the missing line as zero production.
+      </p>
+      <p>Import it from the command line, then reload this page:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% elif state == "inconsistent_hitting" %}
+    <section class="card notice">
+      <h2>The stored {{ season }} hitting line cannot be summarized</h2>
+      <p>{{ message }}</p>
+      <p>Re-import the season line to replace it:</p>
+      <pre class="command"><code>{{ import_command }}</code></pre>
+    </section>
+  {% else %}
+    <h2 class="player-section-heading">Rate Stats</h2>
+    {% with summary_cards=rate_cards, summary_label="Season rate statistics" %}
+      {% include "_summary_cards.html" %}
+    {% endwith %}
+
+    <h2 class="player-section-heading">Season Totals</h2>
+    {% with summary_cards=total_cards, summary_class="summary summary--player-totals", summary_label="Season counting statistics" %}
+      {% include "_summary_cards.html" %}
+    {% endwith %}
+
+    {% if chart_html %}
+      <section class="card chart-card">
+        <header class="chart-card__header">
+          <h2>Plate Appearance Rate Profile</h2>
+          <p class="chart-card__season">
+            K%, BB%, and HR% as percentages of {{ "{:,}".format(overview.hitting.plate_appearances) }} plate appearances
+          </p>
+        </header>
+        <div class="chart-card__figure chart-card__figure--player-rates">{{ chart_html | safe }}</div>
+      </section>
+    {% else %}
+      <section class="card notice">
+        <h2>Plate Appearance Rate Profile</h2>
+        <p>K%, BB%, and HR% are undefined: no plate appearances are stored for this season.</p>
+      </section>
+    {% endif %}
+
+    <section class="about">
+      <span class="about__icon" aria-hidden="true">
+        <svg viewBox="0 0 20 20" focusable="false">
+          <circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+          <circle cx="10" cy="5.9" r="1.1" fill="currentColor" />
+          <path d="M10 9v5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+      </span>
+      <div class="about__body">
+        <h2>About this overview</h2>
+        <p>
+          These figures describe {{ player.full_name }}'s full {{ season }}
+          season as one combined line. If the player appeared for more than one
+          club, their totals are combined here; this page does not show which
+          clubs those were.
+        </p>
+        <p>
+          AVG is hits per at-bat. OBP is (H + BB + HBP) / (AB + BB + HBP + SF).
+          SLG is total bases per at-bat, and OPS is OBP + SLG. A rate shown as
+          — is undefined because its denominator is zero, which is not the
+          same as .000.
+        </p>
+        <p>
+          K%, BB%, and HR% each divide by plate appearances, so the bars
+          describe how the player's plate appearances ended. They are not a
+          ranking or a quality score, and nothing here is compared with MLB.
+        </p>
+        <h3>Primary position</h3>
+        <p>
+          {{ player.primary_position }}. This is the stored identity value, not
+          a historical position for {{ season }}.
+        </p>
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}

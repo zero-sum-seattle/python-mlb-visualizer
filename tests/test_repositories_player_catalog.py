@@ -1,8 +1,14 @@
 """Tests for season-level Player catalog repository behavior."""
 
+from pathlib import Path
+
+import pytest
 from sqlalchemy.orm import Session
 
+from app.database.engine import build_engine, build_session_factory
 from app.database.repositories import (
+    DatabaseSchemaMissingError,
+    get_player_catalog_entry,
     list_player_catalog,
     list_player_catalog_seasons,
     upsert_player,
@@ -126,3 +132,41 @@ def test_hitting_rows_and_global_identities_do_not_supply_catalog_seasons(
     upsert_player_catalog_entry(migrated_session, entry=entry(season=2001))
     migrated_session.commit()
     assert list_player_catalog_seasons(migrated_session) == [2001]
+
+
+def test_catalog_entry_is_one_season_membership(migrated_session: Session) -> None:
+    upsert_player_catalog_entry(migrated_session, entry=entry(season=2003))
+    upsert_player_catalog_entry(migrated_session, entry=entry(2, "Other", season=1999))
+    migrated_session.commit()
+    assert get_player_catalog_entry(
+        migrated_session, player_id=677594, season=2003
+    ) == entry(season=2003)
+    assert (
+        get_player_catalog_entry(migrated_session, player_id=677594, season=1999)
+        is None
+    )
+    assert get_player_catalog_entry(migrated_session, player_id=5, season=2003) is None
+
+
+def test_identity_and_hitting_row_do_not_make_a_catalog_entry(
+    migrated_session: Session,
+) -> None:
+    upsert_player(migrated_session, identity=make_identity())
+    upsert_player_season_hitting(migrated_session, hitting=make_hitting())
+    migrated_session.commit()
+    assert (
+        get_player_catalog_entry(migrated_session, player_id=677594, season=2025)
+        is None
+    )
+
+
+def test_catalog_entry_reports_missing_schema(tmp_path: Path) -> None:
+    engine = build_engine(f"sqlite:///{tmp_path / 'unmigrated.db'}")
+    try:
+        with (
+            build_session_factory(engine)() as session,
+            pytest.raises(DatabaseSchemaMissingError, match="alembic upgrade"),
+        ):
+            get_player_catalog_entry(session, player_id=1, season=2025)
+    finally:
+        engine.dispose()
