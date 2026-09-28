@@ -7,16 +7,21 @@ innings into exact outs.
 """
 
 from collections.abc import Callable, Generator, Iterator
+from datetime import datetime
 from pathlib import Path
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.analytics.team_pitching import build_team_pitching_analysis
 from app.database.engine import build_engine, build_session_factory
 from app.database.repositories import (
+    has_complete_league_pitching_coverage,
     list_team_season_pitching,
+    record_league_season_ingestion_finish,
+    record_league_season_ingestion_start,
     upsert_team_season,
     upsert_team_season_pitching,
 )
@@ -32,10 +37,17 @@ from app.web.charts import (
     rolling_average_trace_name,
 )
 from app.web.dependencies import get_db_session
-from app.web.formatting import build_pitching_summary_cards, format_innings
+from app.web.formatting import (
+    LEAGUE_PITCHING_UNAVAILABLE_NOTE,
+    build_pitching_summary_cards,
+    format_innings,
+)
+from app.web.routes import _load_league_pitching_comparison
 from tests.factories import (
     MARINERS_ID,
     MARINERS_NAME,
+    TWINS_ID,
+    TWINS_NAME,
     make_pitching_season,
     make_season,
 )
@@ -85,6 +97,168 @@ def seed(
         session.commit()
     finally:
         session.close()
+
+
+def test_complete_legacy_league_with_one_team_backfilled_refuses_mlb_baseline(
+    client: TestClient, session_factory: Callable[[], Session]
+) -> None:
+    # The original league import predates pitching persistence.
+    with session_factory() as session:
+        upsert_team_season(session, lines=make_season([8, 8]))
+        upsert_team_season(
+            session,
+            lines=make_season([6, 6], team_id=TWINS_ID, team_name=TWINS_NAME),
+        )
+        record_league_season_ingestion_finish(
+            session,
+            season=2025,
+            expected_team_count=2,
+            successful_team_count=2,
+            failed_team_count=0,
+            started_at=datetime(2025, 10, 1, 12),
+            completed_at=datetime(2025, 10, 1, 13),
+        )
+        session.commit()
+
+    # A later single-team re-import does not change the COMPLETE league state.
+    with session_factory() as session:
+        upsert_team_season_pitching(session, lines=make_pitching_season([2, 4]))
+        session.commit()
+
+    response = client.get(PATH, params={"team_id": MARINERS_ID, "season": 2025})
+
+    assert response.status_code == 200
+    assert response.context["league_comparison"] is None
+
+
+@pytest.mark.parametrize(
+    ("state", "pitching_case", "available"),
+    [
+        ("complete", "matching", True),
+        ("complete", "missing_game", False),
+        ("complete", "wrong_game", False),
+        ("complete", "wrong_team", False),
+        ("complete", "wrong_season", False),
+        ("complete", "extra_game", False),
+        ("incomplete", "matching", False),
+        ("running", "matching", False),
+        ("absent", "matching", False),
+    ],
+)
+def test_league_pitching_requires_matching_season_identities(
+    client: TestClient,
+    session_factory: Callable[[], Session],
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    pitching_case: str,
+    available: bool,
+) -> None:
+    def fail_network(*args, **kwargs):
+        pytest.fail("Browser rendering must not call MLB")
+
+    monkeypatch.setattr(requests.Session, "request", fail_network)
+    monkeypatch.setattr("mlbstatsapi.Mlb.__init__", fail_network)
+    monkeypatch.setattr("mlbstatsapi.AsyncMlb.__init__", fail_network)
+
+    # Two clubs and unequal game counts deliberately avoid MLB count assumptions.
+    seed(session_factory, earned_runs=[2, 4])
+    twins = make_pitching_season([6], team_id=TWINS_ID, team_name=TWINS_NAME)
+    if pitching_case == "wrong_game":
+        twins = [twins[0].model_copy(update={"game_pk": 999999})]
+    elif pitching_case == "wrong_team":
+        twins = [twins[0].model_copy(update={"team_id": 108})]
+    elif pitching_case == "wrong_season":
+        twins = [twins[0].model_copy(update={"season": 2024})]
+    elif pitching_case == "extra_game":
+        twins.append(twins[0].model_copy(update={"game_pk": 999999}))
+
+    with session_factory() as session:
+        upsert_team_season(
+            session,
+            lines=make_season(
+                [6, 6] if pitching_case == "missing_game" else [6],
+                team_id=TWINS_ID,
+                team_name=TWINS_NAME,
+            ),
+        )
+        upsert_team_season_pitching(session, lines=twins)
+        # Unmatched data from another season must not block matching 2025 data.
+        upsert_team_season(session, lines=make_season([8], season=2023))
+        upsert_team_season_pitching(
+            session, lines=make_pitching_season([1], season=2022)
+        )
+        if state == "running":
+            record_league_season_ingestion_start(
+                session,
+                season=2025,
+                expected_team_count=2,
+                started_at=datetime(2025, 10, 1, 12),
+            )
+        elif state != "absent":
+            failed = int(state == "incomplete")
+            record_league_season_ingestion_finish(
+                session,
+                season=2025,
+                expected_team_count=2,
+                successful_team_count=2 - failed,
+                failed_team_count=failed,
+                started_at=datetime(2025, 10, 1, 12),
+                completed_at=datetime(2025, 10, 1, 13),
+            )
+        session.commit()
+
+    if not available:
+
+        def fail_league_calculation(*args, **kwargs):
+            pytest.fail("Unavailable coverage must not reach league analytics")
+
+        monkeypatch.setattr(
+            "app.web.routes.build_league_pitching_context", fail_league_calculation
+        )
+
+    response = client.get(PATH, params={"team_id": MARINERS_ID, "season": 2025})
+
+    assert response.status_code == 200
+    # Team calculations and chart survive every league availability state.
+    assert response.context["analysis"] == build_team_pitching_analysis(
+        make_pitching_season([2, 4])
+    )
+    assert PITCHING_CHART_DIV_ID in response.text
+    assert "Season ERA" in response.text
+    comparison = response.context["league_comparison"]
+    if available:
+        assert comparison is not None
+        assert comparison.league.team_game_records == 3
+        assert comparison.league.teams_represented == 2
+        assert comparison.league.era == pytest.approx(4.0)
+    else:
+        assert comparison is None
+        assert response.context["league_comparison_note"] == (
+            LEAGUE_PITCHING_UNAVAILABLE_NOTE
+        )
+        assert response.context["comparison_sentence"] == ""
+
+
+@pytest.mark.parametrize("with_batting", [True, False])
+def test_complete_state_without_pitching_has_no_baseline(
+    migrated_session: Session, with_batting: bool
+) -> None:
+    if with_batting:
+        upsert_team_season(migrated_session, lines=make_season([8]))
+    record_league_season_ingestion_finish(
+        migrated_session,
+        season=2025,
+        expected_team_count=1,
+        successful_team_count=1,
+        failed_team_count=0,
+        started_at=datetime(2025, 10, 1, 12),
+        completed_at=datetime(2025, 10, 1, 13),
+    )
+    migrated_session.commit()
+    analysis = build_team_pitching_analysis(make_pitching_season([2]))
+
+    assert not has_complete_league_pitching_coverage(migrated_session, season=2025)
+    assert _load_league_pitching_comparison(migrated_session, analysis) is None
 
 
 class TestPageStates:

@@ -166,6 +166,28 @@ simply has no line on this chart yet. Its sign convention is worth noting when
 it does surface: a **negative** ERA difference is the better direction, the
 opposite of every other comparison in the application.
 
+### Pitching coverage guard (issue #61)
+
+The route requires both `COMPLETE` league ingestion state and matching nonempty
+sets of persisted `(team_id, game_pk)` identities in the batting and pitching
+tables for the selected season. The batting identities are the same stored
+dataset used by the league batting loader. A focused repository helper checks
+the identities; rate calculations remain in analytics.
+
+This extra guard is necessary because a `COMPLETE` league import may predate
+pitching persistence. Backfilling one team produces valid, non-null pitching
+rows without supplying every other team's rows. Missing identities refuse the
+baseline; extra pitching identities also refuse it because the pitching loader
+would otherwise include records outside the expected dataset. Empty datasets
+cannot establish coverage. Neither team counts nor scheduled season lengths
+are used to infer completeness.
+
+Unavailable coverage returns the existing `None` comparison and neutral note
+in the route context. Team pitching analysis and the existing template stay
+unchanged. This checks the currently stored dataset only: it does not establish
+refresh snapshot consistency, change ingestion state semantics, or import data
+during browser requests.
+
 ## 7. Missing-data state
 
 A team-season with batting rows but no pitching rows returns **409** and names

@@ -271,6 +271,33 @@ def list_team_season_pitching(
     return [record.to_domain() for record in records]
 
 
+def has_complete_league_pitching_coverage(session: Session, *, season: int) -> bool:
+    """Check pitching identities against the season's stored batting dataset.
+
+    This does not establish league ingestion completeness; callers must also
+    require COMPLETE ingestion state. Both tables must contain the same nonempty
+    set of (team_id, game_pk) identities. Extra pitching rows are refused too,
+    because the league pitching loader would include them in the baseline.
+    """
+    batting_identities = {
+        (team_id, game_pk)
+        for team_id, game_pk in session.execute(
+            select(
+                TeamGameBattingLineRecord.team_id, TeamGameBattingLineRecord.game_pk
+            ).where(TeamGameBattingLineRecord.season == season)
+        )
+    }
+    pitching_identities = {
+        (team_id, game_pk)
+        for team_id, game_pk in session.execute(
+            select(
+                TeamGamePitchingLineRecord.team_id, TeamGamePitchingLineRecord.game_pk
+            ).where(TeamGamePitchingLineRecord.season == season)
+        )
+    }
+    return bool(batting_identities) and batting_identities == pitching_identities
+
+
 def list_league_season_pitching(
     session: Session,
     *,
@@ -280,8 +307,9 @@ def list_league_season_pitching(
 
     The pitching counterpart of ``list_league_season``, and it answers the same
     limited question: what is stored, not whether that is actually MLB-wide.
-    The recorded league-season coverage state is what says whether the stored
-    rows may be described as covering the league.
+    Callers need both COMPLETE league ingestion state and matching batting and
+    pitching identities (``has_complete_league_pitching_coverage``) before
+    describing these rows as covering the league.
     """
     stmt = (
         select(TeamGamePitchingLineRecord)

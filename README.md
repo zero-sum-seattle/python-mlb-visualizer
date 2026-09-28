@@ -231,6 +231,11 @@ League averages are game-weighted over persisted team-game records, not an
 unweighted mean of team averages. League statistics are shown only when the
 stored league-season ingestion state indicates complete coverage.
 
+Pitching context additionally requires the nonempty set of stored pitching
+`(team_id, game_pk)` identities to match the stored batting identities for that
+season. A legacy `COMPLETE` batting import followed by one team's pitching
+backfill cannot establish an MLB-wide pitching baseline.
+
 A `COMPLETE` refresh does **not** mean the baseball season has ended. It means
 every discovered club was successfully refreshed for that import run.
 
