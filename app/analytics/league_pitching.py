@@ -52,10 +52,9 @@ def supports_league_wide_pitching_average(
     drift and let one page call a season MLB-wide while another does not.
 
     Complete coverage is necessary but **not** sufficient here, and the caller
-    must check the second condition itself: a league season imported before
-    pitching was collected has complete batting coverage and no pitching rows
-    at all. ``build_league_pitching_context`` refuses an empty set of records,
-    which is what that state produces.
+    must also verify that pitching identities match the nonempty stored league
+    batting dataset. A legacy COMPLETE import followed by one team's pitching
+    backfill otherwise produces a nonempty but incomplete pitching dataset.
     """
     return supports_league_wide_average(coverage)
 

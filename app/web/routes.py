@@ -69,6 +69,7 @@ from app.database.repositories import (
     MIGRATION_HINT,
     DatabaseSchemaMissingError,
     get_league_season_ingestion,
+    has_matching_league_pitching_identities,
     list_available_team_seasons,
     list_league_season,
     list_league_season_pitching,
@@ -970,25 +971,19 @@ def _load_league_pitching_comparison(
 ) -> TeamPitchingLeagueComparison | None:
     """Read MLB pitching context, or None when it is not earned.
 
-    Two conditions must hold. The season's latest league-wide refresh must have
-    reached ``COMPLETE`` coverage, which is the shared Milestone 5 rule. And
-    the season must actually have stored pitching lines: a league season
-    imported before pitching was collected has complete batting coverage and no
-    pitching rows at all, so coverage alone would wrongly promise an MLB ERA.
-
-    Unlike the baserunner backfill there is no partially-known state to report.
-    Every pitching column is NOT NULL, so the rows either exist or they do not,
-    and an absent set yields the plain missing-comparison note rather than
-    backfill guidance.
+    COMPLETE ingestion state may predate pitching persistence. Require matching
+    stored batting and pitching team-game identities as well, so a single-team
+    backfill cannot become an MLB baseline. Missing or mismatched coverage uses
+    the existing unavailable comparison state.
     """
     coverage = get_league_season_ingestion(session, season=analysis.season)
     if not supports_league_wide_pitching_average(coverage):
         return None
 
-    league_games = list_league_season_pitching(session, season=analysis.season)
-    if not league_games:
+    if not has_matching_league_pitching_identities(session, season=analysis.season):
         return None
 
+    league_games = list_league_season_pitching(session, season=analysis.season)
     league = build_league_pitching_context(league_games)
     return compare_team_pitching_to_league(analysis, league)
 
