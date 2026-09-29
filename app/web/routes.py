@@ -69,7 +69,7 @@ from app.database.repositories import (
     MIGRATION_HINT,
     DatabaseSchemaMissingError,
     get_league_season_ingestion,
-    has_complete_league_pitching_coverage,
+    has_matching_league_pitching_identities,
     list_available_team_seasons,
     list_league_season,
     list_league_season_pitching,
@@ -980,7 +980,7 @@ def _load_league_pitching_comparison(
     if not supports_league_wide_pitching_average(coverage):
         return None
 
-    if not has_complete_league_pitching_coverage(session, season=analysis.season):
+    if not has_matching_league_pitching_identities(session, season=analysis.season):
         return None
 
     league_games = list_league_season_pitching(session, season=analysis.season)

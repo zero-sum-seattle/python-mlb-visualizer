@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.analytics.team_pitching import build_team_pitching_analysis
 from app.database.engine import build_engine, build_session_factory
 from app.database.repositories import (
-    has_complete_league_pitching_coverage,
+    has_matching_league_pitching_identities,
     list_team_season_pitching,
     record_league_season_ingestion_finish,
     record_league_season_ingestion_start,
@@ -257,7 +257,7 @@ def test_complete_state_without_pitching_has_no_baseline(
     migrated_session.commit()
     analysis = build_team_pitching_analysis(make_pitching_season([2]))
 
-    assert not has_complete_league_pitching_coverage(migrated_session, season=2025)
+    assert not has_matching_league_pitching_identities(migrated_session, season=2025)
     assert _load_league_pitching_comparison(migrated_session, analysis) is None
 
 

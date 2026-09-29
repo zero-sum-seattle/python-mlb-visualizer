@@ -271,7 +271,7 @@ def list_team_season_pitching(
     return [record.to_domain() for record in records]
 
 
-def has_complete_league_pitching_coverage(session: Session, *, season: int) -> bool:
+def has_matching_league_pitching_identities(session: Session, *, season: int) -> bool:
     """Check pitching identities against the season's stored batting dataset.
 
     This does not establish league ingestion completeness; callers must also
@@ -308,7 +308,7 @@ def list_league_season_pitching(
     The pitching counterpart of ``list_league_season``, and it answers the same
     limited question: what is stored, not whether that is actually MLB-wide.
     Callers need both COMPLETE league ingestion state and matching batting and
-    pitching identities (``has_complete_league_pitching_coverage``) before
+    pitching identities (``has_matching_league_pitching_identities``) before
     describing these rows as covering the league.
     """
     stmt = (
