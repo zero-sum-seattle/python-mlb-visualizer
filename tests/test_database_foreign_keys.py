@@ -2,13 +2,18 @@
 
 SQLite ignores ``FOREIGN KEY`` clauses unless each connection enables
 ``PRAGMA foreign_keys``. These tests prove enforcement against a database
-migrated through Alembic, using the same ``build_engine`` path the
-application, CLI scripts, and repository tests use.
+migrated through the project's Alembic path, using the same ``build_engine``
+path the application, CLI scripts, and repository tests use.
+
+Alembic itself runs on its own engine (``alembic/env.py``) without the
+pragma. Nothing here runs migrations with enforcement on; the migration test
+only checks the migrated result through an enforcing application engine.
 """
 
+import sqlite3
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
@@ -17,8 +22,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import engine as engine_module
-from app.database.engine import build_engine, build_session_factory
-from app.database.models import PlayerSeasonCatalogRecord, PlayerSeasonHittingRecord
+from app.database.engine import (
+    SQLiteForeignKeyEnforcementError,
+    _enable_sqlite_foreign_keys,
+    build_engine,
+    build_session_factory,
+)
+from app.database.models import (
+    PlayerRecord,
+    PlayerSeasonCatalogRecord,
+    PlayerSeasonHittingRecord,
+)
 from app.database.repositories import (
     ensure_player_season_catalog_membership,
     get_player,
@@ -27,8 +41,14 @@ from app.database.repositories import (
     upsert_player,
     upsert_player_season_hitting,
 )
+from app.schemas.ingestion import PlayerPersistenceOutcome
 from app.schemas.players import PlayerIdentity, PlayerSeasonHitting
+from app.services.player_catalog_ingestion import ingest_player_catalog
+from app.services.player_season_ingestion import ingest_player_season
 from tests.conftest import run_alembic_upgrade
+from tests.test_player_catalog_ingestion import FakeDirectory
+from tests.test_player_catalog_ingestion import make_person as make_catalog_person
+from tests.test_players_service import FakeMlb, make_person, make_split, make_stat
 
 PLAYER_ID = 677594
 SEASON = 2025
@@ -71,6 +91,24 @@ def migrated_engine(migrated_db_path: Path) -> Generator[Engine, None, None]:
         yield engine
     finally:
         engine.dispose()
+
+
+@pytest.fixture(params=["declaration_order", "players_flushed_last"])
+def unit_of_work_order(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    """Run a valid-write test under both possible unit-of-work INSERT orders.
+
+    The Player models declare ``ForeignKey``s but no ``relationship()``, so
+    SQLAlchemy's unit of work has no parent/child edge between the mappers and
+    orders their INSERT batches by ``mapper._sort_key`` (module + class name).
+    ``PlayerRecord`` currently sorts first only by alphabetical coincidence.
+    ``players_flushed_last`` simulates a rename that would sort it last, so
+    these tests prove valid writes do not depend on class names.
+    """
+    if request.param == "players_flushed_last":
+        monkeypatch.setattr(PlayerRecord.__mapper__, "_sort_key", "~players_last")
+    return request.param
 
 
 def foreign_keys_pragma(engine: Engine) -> int:
@@ -151,17 +189,33 @@ def test_raw_orphan_player_season_hitting_insert_is_rejected(
         )
 
 
-def test_valid_player_parent_child_persistence_succeeds_in_one_commit(
-    migrated_session: Session,
+def test_new_player_identity_and_membership_succeed_in_one_transaction(
+    migrated_session: Session, unit_of_work_order: str
 ) -> None:
-    """Identity, membership, and hitting added together flush parent-first."""
     identity = make_identity()
-    upsert_player(migrated_session, identity=identity)
-    ensure_player_season_catalog_membership(
-        migrated_session, identity=identity, season=SEASON
+    with migrated_session.begin():
+        upsert_player(migrated_session, identity=identity)
+        ensure_player_season_catalog_membership(
+            migrated_session, identity=identity, season=SEASON
+        )
+
+    assert get_player(migrated_session, player_id=PLAYER_ID) == identity
+    assert (
+        get_player_catalog_entry(migrated_session, player_id=PLAYER_ID, season=SEASON)
+        is not None
     )
-    upsert_player_season_hitting(migrated_session, hitting=make_hitting())
-    migrated_session.commit()
+
+
+def test_new_player_identity_membership_and_hitting_succeed_in_one_transaction(
+    migrated_session: Session, unit_of_work_order: str
+) -> None:
+    identity = make_identity()
+    with migrated_session.begin():
+        upsert_player(migrated_session, identity=identity)
+        ensure_player_season_catalog_membership(
+            migrated_session, identity=identity, season=SEASON
+        )
+        upsert_player_season_hitting(migrated_session, hitting=make_hitting())
 
     assert get_player(migrated_session, player_id=PLAYER_ID) == identity
     catalog_entry = get_player_catalog_entry(
@@ -175,9 +229,80 @@ def test_valid_player_parent_child_persistence_succeeds_in_one_commit(
     )
 
 
+def test_failed_child_write_rolls_back_flushed_new_player(
+    migrated_session: Session,
+) -> None:
+    """The early parent flush stays inside the caller's single transaction."""
+    with pytest.raises(IntegrityError), migrated_session.begin():
+        upsert_player(migrated_session, identity=make_identity())
+        # A hitting row for a different, unknown player is still an orphan.
+        upsert_player_season_hitting(
+            migrated_session,
+            hitting=make_hitting().model_copy(update={"player_id": 1}),
+        )
+
+    assert count_rows(migrated_session, PlayerRecord) == 0
+    assert count_rows(migrated_session, PlayerSeasonHittingRecord) == 0
+
+
+def test_player_season_ingestion_succeeds_and_reruns_with_enforcement(
+    migrated_session: Session, unit_of_work_order: str
+) -> None:
+    client = FakeMlb(
+        person=make_person(),
+        player_stats={"hitting": {"season": make_stat([make_split()])}},
+    )
+
+    first = ingest_player_season(
+        session=migrated_session, player_id=PLAYER_ID, season=SEASON, client=client
+    )
+    rerun = ingest_player_season(
+        session=migrated_session, player_id=PLAYER_ID, season=SEASON, client=client
+    )
+
+    assert first.identity_outcome is PlayerPersistenceOutcome.INSERTED
+    assert first.hitting_outcome is PlayerPersistenceOutcome.INSERTED
+    assert rerun.identity_outcome is PlayerPersistenceOutcome.UNCHANGED
+    assert rerun.hitting_outcome is PlayerPersistenceOutcome.UNCHANGED
+    assert count_rows(migrated_session, PlayerRecord) == 1
+    assert count_rows(migrated_session, PlayerSeasonCatalogRecord) == 1
+    assert count_rows(migrated_session, PlayerSeasonHittingRecord) == 1
+
+
+def test_player_catalog_ingestion_succeeds_and_reruns_with_enforcement(
+    migrated_session: Session, unit_of_work_order: str
+) -> None:
+    people = [
+        make_catalog_person(player_id=PLAYER_ID, full_name="Julio Rodriguez"),
+        make_catalog_person(player_id=663728, full_name="Cal Raleigh"),
+    ]
+
+    first = ingest_player_catalog(
+        session=migrated_session, season=SEASON, client=FakeDirectory(people)
+    )
+    renamed = [people[0], make_catalog_person(player_id=663728, full_name="Big Dumper")]
+    rerun = ingest_player_catalog(
+        session=migrated_session, season=SEASON, client=FakeDirectory(renamed)
+    )
+    next_season = ingest_player_catalog(
+        session=migrated_session, season=SEASON + 1, client=FakeDirectory(renamed)
+    )
+
+    assert (first.inserted, first.updated, first.unchanged) == (2, 0, 0)
+    assert (rerun.inserted, rerun.updated, rerun.unchanged) == (0, 1, 1)
+    assert next_season.inserted == 2
+    assert count_rows(migrated_session, PlayerRecord) == 2
+    assert count_rows(migrated_session, PlayerSeasonCatalogRecord) == 4
+
+
 def test_freshly_migrated_database_has_no_foreign_key_violations(
     tmp_path: Path,
 ) -> None:
+    """Upgrade through the project's Alembic path, then inspect with enforcement.
+
+    Alembic runs on its own non-enforcing engine; this verifies the migrated
+    result, not migration execution under enforcement.
+    """
     db_path = tmp_path / "fresh.db"
     url = f"sqlite:///{db_path}"
     run_alembic_upgrade(url)
@@ -222,3 +347,33 @@ def test_session_factory_sessions_enforce_foreign_keys(
         assert session.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
     finally:
         session.close()
+
+
+def test_hook_enables_foreign_keys_even_if_a_transaction_is_open() -> None:
+    """SQLite ignores the pragma inside a transaction; the hook must not."""
+    connection = sqlite3.connect(":memory:", autocommit=False)
+    try:
+        assert connection.in_transaction
+
+        _enable_sqlite_foreign_keys(connection, Mock())
+
+        assert connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
+        assert connection.autocommit is False
+    finally:
+        connection.close()
+
+
+def test_hook_restores_legacy_transaction_control() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        _enable_sqlite_foreign_keys(connection, Mock())
+
+        assert connection.autocommit == sqlite3.LEGACY_TRANSACTION_CONTROL
+        assert connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_hook_rejects_non_sqlite3_connection() -> None:
+    with pytest.raises(SQLiteForeignKeyEnforcementError, match="sqlite3"):
+        _enable_sqlite_foreign_keys(Mock(), Mock())

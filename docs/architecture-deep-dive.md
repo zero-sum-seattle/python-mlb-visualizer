@@ -158,19 +158,37 @@ state → add batting strikeouts column).
 **Foreign keys (added in issue #63).** SQLite parses `FOREIGN KEY` clauses
 but ignores them unless each connection runs `PRAGMA foreign_keys = ON`.
 `build_engine()` (`app/database/engine.py`) registers an engine-scoped
-`connect` listener that sets the pragma for SQLite URLs only, so the web
-app, import scripts, and tests all reject orphan `player_seasons` and
-`player_season_hitting` rows. Repositories still add Player identity before
-membership and hitting; the ORM flushes parents first because the ordering
-comes from the declared `ForeignKey`s, not from `relationship()`s.
+`connect` listener for SQLite URLs only, so the web app, import scripts, and
+tests all reject orphan `player_seasons` and `player_season_hitting` rows.
+SQLite silently ignores the pragma inside an open transaction, so the
+listener follows SQLAlchemy's SQLite dialect guidance: it sets the `sqlite3`
+connection's `autocommit` to `True` while running the pragma, restores the
+previous value, and reads the pragma back, raising
+`SQLiteForeignKeyEnforcementError` if enforcement did not turn on.
+Non-SQLite URLs get no listener.
+
+**Parent-before-child writes.** The Player models declare `ForeignKey`s but
+no `relationship()`s. SQLAlchemy's unit of work only orders INSERTs across
+mappers when a relationship links them; otherwise it orders mapper batches
+by module and class name. `PlayerRecord` happens to sort before
+`PlayerSeasonCatalogRecord` and `PlayerSeasonHittingRecord`, but that is
+coincidence, not a guarantee. `upsert_player()` therefore flushes
+immediately after adding a new player, so the `players` row exists in the
+caller's open transaction before membership or hitting rows reference it.
+The flush does not commit: single-player and catalog ingestion still run in
+one `session.begin()` block and roll back together on failure. Updates and
+unchanged players do not flush.
 
 Alembic builds its own engine in `alembic/env.py` and does not go through
 `build_engine()`, so migrations run with SQLite's default (enforcement off).
-That was left in place on purpose: fresh upgrades and downgrades pass
-either way, and SQLite's `batch_alter_table` table rebuilds are safest with
-enforcement off. Enforcement also applies only to new writes. Rows
-committed earlier are not re-checked; `PRAGMA foreign_key_check` lists any
-orphans.
+That is deliberate: SQLite's `batch_alter_table` table rebuilds are safest
+with enforcement off, and changing it is outside issue #63. The automated
+test (`tests/test_database_foreign_keys.py`) upgrades a fresh database
+through that normal Alembic path, then opens it with an enforcing
+application engine and checks `PRAGMA foreign_key_check` reports no
+violations. Migrations are **not** exercised with enforcement on.
+Enforcement also applies only to new writes. Rows committed earlier are not
+re-checked; `PRAGMA foreign_key_check` lists any orphans.
 
 ## 3. Analytics — `app/analytics/`
 

@@ -1,5 +1,7 @@
 """Database engine and session factory construction."""
 
+import sqlite3
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection
@@ -27,6 +29,10 @@ def build_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+class SQLiteForeignKeyEnforcementError(RuntimeError):
+    """A SQLite connection could not be configured to enforce foreign keys."""
+
+
 def _enable_sqlite_foreign_keys(
     dbapi_connection: DBAPIConnection,
     connection_record: ConnectionPoolEntry,
@@ -34,12 +40,32 @@ def _enable_sqlite_foreign_keys(
     """Turn on enforcement of the schema's declared foreign keys.
 
     SQLite parses ``FOREIGN KEY`` clauses but ignores them unless each
-    connection sets this pragma. The pragma is a no-op inside an open
-    transaction; it takes effect here because the driver's default (legacy)
-    transaction control has not begun one when a connection is first opened.
+    connection sets ``PRAGMA foreign_keys = ON``, and silently ignores that
+    pragma inside an open transaction. Following SQLAlchemy's SQLite dialect
+    guidance, the pragma runs with ``sqlite3`` autocommit temporarily on, so
+    it never depends on the driver's transaction-control mode. The setting is
+    read back so a connection that cannot enforce foreign keys fails loudly.
     """
-    cursor = dbapi_connection.cursor()
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        raise SQLiteForeignKeyEnforcementError(
+            "Expected a sqlite3 connection for a SQLite database URL, got "
+            f"{type(dbapi_connection).__name__}"
+        )
+
+    previous_autocommit = dbapi_connection.autocommit
+    dbapi_connection.autocommit = True
     try:
-        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys = ON")
+            enabled = cursor.execute("PRAGMA foreign_keys").fetchone()
+        finally:
+            cursor.close()
     finally:
-        cursor.close()
+        dbapi_connection.autocommit = previous_autocommit
+
+    if enabled != (1,):
+        raise SQLiteForeignKeyEnforcementError(
+            "SQLite did not enable foreign-key enforcement "
+            f"(PRAGMA foreign_keys returned {enabled!r})"
+        )
