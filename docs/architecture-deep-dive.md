@@ -155,6 +155,23 @@ Migrations are Alembic (`alembic/versions/`); three so far, matching the
 project's milestones (create batting lines table → add league ingestion
 state → add batting strikeouts column).
 
+**Foreign keys (added in issue #63).** SQLite parses `FOREIGN KEY` clauses
+but ignores them unless each connection runs `PRAGMA foreign_keys = ON`.
+`build_engine()` (`app/database/engine.py`) registers an engine-scoped
+`connect` listener that sets the pragma for SQLite URLs only, so the web
+app, import scripts, and tests all reject orphan `player_seasons` and
+`player_season_hitting` rows. Repositories still add Player identity before
+membership and hitting; the ORM flushes parents first because the ordering
+comes from the declared `ForeignKey`s, not from `relationship()`s.
+
+Alembic builds its own engine in `alembic/env.py` and does not go through
+`build_engine()`, so migrations run with SQLite's default (enforcement off).
+That was left in place on purpose: fresh upgrades and downgrades pass
+either way, and SQLite's `batch_alter_table` table rebuilds are safest with
+enforcement off. Enforcement also applies only to new writes. Rows
+committed earlier are not re-checked; `PRAGMA foreign_key_check` lists any
+orphans.
+
 ## 3. Analytics — `app/analytics/`
 
 Pure functions: given `Sequence[TeamGameBattingLine]` in, a typed
