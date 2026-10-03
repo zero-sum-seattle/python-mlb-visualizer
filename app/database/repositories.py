@@ -636,13 +636,20 @@ def upsert_player(
 ) -> PlayerPersistenceOutcome:
     """Insert, update, or leave unchanged the one row for a player's identity.
 
-    Does not commit or roll back.
+    Does not commit or roll back. A newly inserted player is flushed
+    immediately, so the row exists inside the caller's open transaction before
+    any ``player_seasons`` or ``player_season_hitting`` row references it.
     """
     record = _load_player(session, identity.player_id)
     now = datetime.now(UTC).replace(tzinfo=None)
 
     if record is None:
         session.add(PlayerRecord.from_domain(identity, created_at=now, updated_at=now))
+        # The models declare ForeignKeys but no relationship(), so the unit of
+        # work has no parent/child dependency between these mappers and orders
+        # their INSERTs by class name. Flushing here makes the parent row
+        # visible to SQLite's foreign-key checks without relying on that.
+        session.flush()
         return PlayerPersistenceOutcome.INSERTED
 
     if record.to_domain() == identity:
