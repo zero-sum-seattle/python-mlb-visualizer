@@ -8,14 +8,12 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app.analytics.player_hitting import (
-    PlayerHittingAnalysisError,
-    build_player_hitting_overview,
-)
+from app.analytics.player_hitting import build_player_hitting_overview
 from app.config import Settings
 from app.database.repositories import (
     MIGRATION_HINT,
     DatabaseSchemaMissingError,
+    InvalidStoredPlayerHittingError,
     get_player_catalog_entry,
     get_player_season_hitting,
     list_player_catalog,
@@ -125,10 +123,18 @@ def create_player_router(templates: Jinja2Templates, settings: Settings) -> APIR
         # The directory itself never renders the stats.
         hitting_overview_url = None
         if selected_player is not None and season is not None:
-            hitting = get_player_season_hitting(
-                session, player_id=selected_player.player_id, season=season
-            )
-            if hitting is not None:
+            try:
+                hitting_stored = (
+                    get_player_season_hitting(
+                        session, player_id=selected_player.player_id, season=season
+                    )
+                    is not None
+                )
+            except InvalidStoredPlayerHittingError:
+                # A row exists; the overview explains why it cannot be
+                # summarized and how to replace it.
+                hitting_stored = True
+            if hitting_stored:
                 hitting_overview_url = player_hitting_url(
                     season=season, player_id=selected_player.player_id
                 )
@@ -225,18 +231,19 @@ def create_player_router(templates: Jinja2Templates, settings: Settings) -> APIR
             player_id=player_id, season=season
         )
 
-        hitting = get_player_season_hitting(session, player_id=player_id, season=season)
+        try:
+            hitting = get_player_season_hitting(
+                session, player_id=player_id, season=season
+            )
+        except InvalidStoredPlayerHittingError as exc:
+            context["message"] = str(exc)
+            return render("inconsistent_hitting", 409)
         if hitting is None:
             # The selection is valid; only the analytics are unavailable, like
             # Team comparison without league data. Not zeroes, not an MLB call.
             return render("missing_hitting")
 
-        try:
-            overview = build_player_hitting_overview(hitting)
-        except PlayerHittingAnalysisError as exc:
-            context["message"] = str(exc)
-            return render("inconsistent_hitting", 409)
-
+        overview = build_player_hitting_overview(hitting)
         context["overview"] = overview
         context["rate_cards"] = build_player_hitting_rate_cards(overview)
         context["total_cards"] = build_player_hitting_total_cards(overview)

@@ -24,7 +24,11 @@ from app.database.repositories import (
 from app.main import create_app
 from app.web.dependencies import get_db_session
 from tests.test_repositories_player_catalog import entry
-from tests.test_repositories_players import make_hitting, make_identity
+from tests.test_repositories_players import (
+    corrupt_stored_hitting,
+    make_hitting,
+    make_identity,
+)
 from tests.test_web_page_scaffolding import NavigationParser
 
 
@@ -560,40 +564,53 @@ def test_no_plate_appearances_leaves_rates_undefined(
     assert "K%, BB%, and HR% are undefined" in response.text
 
 
-@pytest.mark.usefixtures("catalog")
+@pytest.mark.usefixtures("stored_hitting")
 def test_self_contradicting_hitting_row_is_a_conflict(
     client: TestClient, migrated_session: Session
 ) -> None:
-    upsert_player_season_hitting(
-        migrated_session,
-        hitting=make_hitting(season=2003, at_bats=100, hits=150),
-    )
-    migrated_session.commit()
+    """Ingestion can no longer write this row, but one stored before the hits
+    rule existed is still possible and must be named, not summarized."""
+    corrupt_stored_hitting(migrated_session, player_id=677594, season=2003, hits=501)
     response = client.get(HITTING_URL)
     assert response.status_code == 409
-    assert "150 hits in 100 at-bats" in response.text
+    assert "hits (501) cannot exceed at_bats (500)" in response.text
     assert "summary-card" not in response.text
     assert "Traceback" not in response.text
 
 
-@pytest.mark.usefixtures("catalog")
+@pytest.mark.usefixtures("stored_hitting")
 def test_strikeouts_over_plate_appearances_is_a_conflict_not_a_500(
     client: TestClient, migrated_session: Session
 ) -> None:
     """Regression: this row once reached the K% schema bound and escaped as a
-    Pydantic ValidationError instead of the route's 409 state."""
-    upsert_player_season_hitting(
-        migrated_session, hitting=make_hitting(season=2003, strikeouts=601)
+    Pydantic ValidationError instead of the route's 409 state. It now fails
+    the domain's strikeouts-within-at-bats rule while being read."""
+    corrupt_stored_hitting(
+        migrated_session, player_id=677594, season=2003, strikeouts=601
     )
-    migrated_session.commit()
     response = client.get(HITTING_URL)
     assert response.status_code == 409
-    assert "601 strikeouts in 600 plate appearances" in response.text
+    assert "strikeouts (601) cannot exceed at_bats (500)" in response.text
     assert "The stored 2003 hitting line cannot be summarized" in response.text
+    assert "scripts/import_player_season.py --player-id 677594" in response.text
     assert "summary-card" not in response.text
     assert "plotly" not in response.text
     assert "Traceback" not in response.text
     assert "ValidationError" not in response.text
+
+
+@pytest.mark.usefixtures("stored_hitting")
+def test_directory_still_links_a_contradictory_stored_row(
+    client: TestClient, migrated_session: Session
+) -> None:
+    """The row exists, so the directory links to the overview that explains
+    it rather than failing or claiming no hitting is stored."""
+    corrupt_stored_hitting(
+        migrated_session, player_id=677594, season=2003, base_on_balls=601
+    )
+    response = client.get("/players?season=2003&player_id=677594")
+    assert response.status_code == 200
+    assert "/players/hitting?season=2003&amp;player_id=677594" in response.text
 
 
 @pytest.mark.parametrize(

@@ -8,10 +8,7 @@ hold the rule this module exists for: an undefined rate is None, never 0.0.
 import pytest
 from pydantic import ValidationError
 
-from app.analytics.player_hitting import (
-    PlayerHittingAnalysisError,
-    build_player_hitting_overview,
-)
+from app.analytics.player_hitting import build_player_hitting_overview
 from app.schemas.analytics import PlayerHittingOverview, PlayerPlateAppearanceRates
 from tests.test_repositories_players import make_hitting
 
@@ -143,56 +140,38 @@ class TestUndefinedRates:
         assert overview.plate_appearance_rates.home_run_rate == 0.0
 
 
-def test_more_hits_than_at_bats_is_a_data_integrity_error() -> None:
-    hitting = make_hitting(
-        **{**NO_PLATE_APPEARANCES, "plate_appearances": 10, "at_bats": 3, "hits": 5}
-    )
-    with pytest.raises(PlayerHittingAnalysisError, match="5 hits in 3 at-bats"):
-        build_player_hitting_overview(hitting)
+class TestDomainBounds:
+    """``PlayerSeasonHitting`` bounds every numerator by its denominator, so
+    lines at those bounds are the extremes analytics must still describe.
+    Lines beyond them cannot be constructed; see ``test_player_schemas`` and,
+    for corrupted stored rows, ``test_web_players``."""
 
+    def test_every_at_bat_a_home_run(self) -> None:
+        overview = build_player_hitting_overview(
+            make_hitting(
+                **{
+                    **NO_PLATE_APPEARANCES,
+                    "plate_appearances": 4,
+                    "at_bats": 4,
+                    "hits": 4,
+                    "home_runs": 4,
+                }
+            )
+        )
+        assert overview.batting_average == 1.0
+        assert overview.slugging_percentage == 4.0
+        assert overview.plate_appearance_rates is not None
+        assert overview.plate_appearance_rates.home_run_rate == 1.0
 
-@pytest.mark.parametrize(
-    ("overrides", "message"),
-    [
-        (
-            {"strikeouts": 601},
-            "Player 677594's stored 2025 hitting line records 601 strikeouts in "
-            "600 plate appearances; strikeouts cannot exceed plate appearances",
-        ),
-        (
-            {"base_on_balls": 601},
-            "records 601 walks in 600 plate appearances; walks cannot exceed "
-            "plate appearances",
-        ),
-        (
-            # The schema requires home runs <= hits, so the row is also over
-            # at-bats; the plate-appearance bound is still the one reported.
-            {
-                **NO_PLATE_APPEARANCES,
-                "plate_appearances": 2,
-                "at_bats": 2,
-                "hits": 3,
-                "home_runs": 3,
-            },
-            "records 3 home runs in 2 plate appearances; home runs cannot exceed "
-            "plate appearances",
-        ),
-        (
-            {"strikeouts": 501},
-            "records 501 strikeouts in 500 at-bats; strikeouts cannot exceed at-bats",
-        ),
-    ],
-    ids=["so-over-pa", "bb-over-pa", "hr-over-pa", "so-over-ab"],
-)
-def test_counts_over_their_denominator_are_data_integrity_errors(
-    overrides: dict[str, int], message: str
-) -> None:
-    """A corrupted row must raise the analytics error the route handles,
-    never a schema ValidationError from building the rate models."""
-    hitting = make_hitting(**overrides)
-    with pytest.raises(PlayerHittingAnalysisError) as raised:
-        build_player_hitting_overview(hitting)
-    assert message in str(raised.value)
+    def test_every_plate_appearance_a_walk(self) -> None:
+        overview = build_player_hitting_overview(
+            make_hitting(
+                **{**NO_PLATE_APPEARANCES, "plate_appearances": 4, "base_on_balls": 4}
+            )
+        )
+        assert overview.on_base_percentage == 1.0
+        assert overview.plate_appearance_rates is not None
+        assert overview.plate_appearance_rates.walk_rate == 1.0
 
 
 def test_rate_schema_remains_a_second_integrity_boundary() -> None:

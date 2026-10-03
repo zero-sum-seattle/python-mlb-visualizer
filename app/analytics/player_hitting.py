@@ -23,10 +23,6 @@ from app.schemas.analytics import PlayerHittingOverview, PlayerPlateAppearanceRa
 from app.schemas.players import PlayerSeasonHitting
 
 
-class PlayerHittingAnalysisError(ValueError):
-    """A stored hitting line contradicts itself and cannot be described."""
-
-
 def build_player_hitting_overview(
     hitting: PlayerSeasonHitting,
 ) -> PlayerHittingOverview:
@@ -43,14 +39,12 @@ def build_player_hitting_overview(
     - ``OPS = OBP + SLG``, undefined when either component is.
     - ``K% = SO / PA``, ``BB% = BB / PA``, ``HR% = HR / PA``.
 
-    Raises
-    ------
-    PlayerHittingAnalysisError
-        The line records more of an outcome than the plate appearances or
-        at-bats that contain it, which no real season can.
+    No count is re-checked against its denominator here: ``PlayerSeasonHitting``
+    already guarantees every numerator above is bounded by its denominator, so
+    a valid line always produces rates within their schema bounds. A stored row
+    that violates that contract never becomes a ``PlayerSeasonHitting``; the
+    repository reports it as ``InvalidStoredPlayerHittingError`` instead.
     """
-    _require_subset_counts(hitting)
-
     total_bases = (
         hitting.hits + hitting.doubles + 2 * hitting.triples + 3 * hitting.home_runs
     )
@@ -78,34 +72,6 @@ def build_player_hitting_overview(
         on_base_plus_slugging=on_base_plus_slugging,
         plate_appearance_rates=_plate_appearance_rates(hitting),
     )
-
-
-def _require_subset_counts(hitting: PlayerSeasonHitting) -> None:
-    """Reject a line whose numerators exceed the totals that contain them.
-
-    ``PlayerSeasonHitting`` does not prove these relationships, and each one
-    bounds a rate derived here. Checking them explicitly turns a corrupted
-    stored row into a named data-integrity error rather than a schema failure
-    while constructing the analysis. A batting strikeout always ends an
-    at-bat, so it is bounded by at-bats as well as plate appearances.
-
-    Plate-appearance bounds are checked first so the error names the rate
-    denominator that was actually exceeded.
-    """
-    plate_appearances = hitting.plate_appearances
-    for count, count_name, total, total_name in (
-        (hitting.strikeouts, "strikeouts", plate_appearances, "plate appearances"),
-        (hitting.base_on_balls, "walks", plate_appearances, "plate appearances"),
-        (hitting.home_runs, "home runs", plate_appearances, "plate appearances"),
-        (hitting.hits, "hits", hitting.at_bats, "at-bats"),
-        (hitting.strikeouts, "strikeouts", hitting.at_bats, "at-bats"),
-    ):
-        if count > total:
-            raise PlayerHittingAnalysisError(
-                f"Player {hitting.player_id}'s stored {hitting.season} hitting "
-                f"line records {count} {count_name} in {total} {total_name}; "
-                f"{count_name} cannot exceed {total_name}"
-            )
 
 
 def _plate_appearance_rates(

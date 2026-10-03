@@ -18,7 +18,11 @@ from app.services.player_season_ingestion import (
     PlayerSeasonIngestionError,
     ingest_player_season,
 )
-from app.services.players import NoHittingStatsError, PlayerNotFoundError
+from app.services.players import (
+    NoHittingStatsError,
+    PlayerDataError,
+    PlayerNotFoundError,
+)
 from tests.test_players_service import FakeMlb, make_person, make_split, make_stat
 
 PLAYER_ID = 677594
@@ -184,6 +188,62 @@ def test_no_hitting_stats_leaves_database_unchanged(migrated_session: Session) -
     )
     assert player_count == 0
     assert hitting_count == 0
+
+
+def _row_counts(session: Session) -> tuple[int, int, int]:
+    return tuple(
+        session.scalar(select(func.count()).select_from(record))
+        for record in (
+            PlayerRecord,
+            PlayerSeasonCatalogRecord,
+            PlayerSeasonHittingRecord,
+        )
+    )
+
+
+def test_contradictory_hitting_leaves_database_unchanged(
+    migrated_session: Session,
+) -> None:
+    """Validation fails before the transaction opens, so neither the identity,
+    the catalog membership, nor the hitting line is written."""
+    invalid = {"hitting": {"season": make_stat([make_split(at_bats=100, hits=101)])}}
+    client = FakeMlb(person=make_person(), player_stats=invalid)
+    with pytest.raises(PlayerDataError, match="hits"):
+        ingest_player_season(
+            session=migrated_session, player_id=PLAYER_ID, season=SEASON, client=client
+        )
+    assert _row_counts(migrated_session) == (0, 0, 0)
+
+
+def test_contradictory_reimport_keeps_the_stored_line(
+    migrated_session: Session,
+) -> None:
+    ingest_player_season(
+        session=migrated_session,
+        player_id=PLAYER_ID,
+        season=SEASON,
+        client=make_client(),
+    )
+    stored = get_player_season_hitting(
+        migrated_session, player_id=PLAYER_ID, season=SEASON
+    )
+    invalid = {"hitting": {"season": make_stat([make_split(hits=60, strikeouts=501)])}}
+    renamed = FakeMlb(person=make_person(full_name="J-Rod"), player_stats=invalid)
+    with pytest.raises(PlayerDataError, match="strikeouts"):
+        ingest_player_season(
+            session=migrated_session,
+            player_id=PLAYER_ID,
+            season=SEASON,
+            client=renamed,
+        )
+    assert _row_counts(migrated_session) == (1, 1, 1)
+    assert (
+        get_player_season_hitting(migrated_session, player_id=PLAYER_ID, season=SEASON)
+        == stored
+    )
+    identity = get_player(migrated_session, player_id=PLAYER_ID)
+    assert identity is not None
+    assert identity.full_name == "Julio Rodriguez"
 
 
 def test_database_error_rolls_back_both_writes(migrated_session: Session) -> None:

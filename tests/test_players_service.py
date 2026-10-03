@@ -296,6 +296,53 @@ def test_normalization_validation_failure_raises_player_data_error() -> None:
         get_player_season_hitting(PLAYER_ID, SEASON, client=client)
 
 
+@pytest.mark.parametrize(
+    ("stat_overrides", "message"),
+    [
+        ({"at_bats": 100, "hits": 101}, "hits (101) cannot exceed at_bats (100)"),
+        (
+            {"at_bats": 100, "hits": 60, "strikeouts": 101},
+            "strikeouts (101) cannot exceed at_bats (100)",
+        ),
+        (
+            {"plate_appearances": 450},
+            "at_bats (500) cannot exceed plate_appearances (450)",
+        ),
+        (
+            {"plate_appearances": 600, "base_on_balls": 601},
+            "base_on_balls (601) cannot exceed plate_appearances (600)",
+        ),
+    ],
+    ids=["hits-over-ab", "so-over-ab", "ab-over-pa", "bb-over-pa"],
+)
+def test_contradictory_upstream_counts_raise_player_data_error(
+    stat_overrides: dict[str, int], message: str
+) -> None:
+    """MLB data that breaks a hitting definition is refused at normalization,
+    never returned as a ``PlayerSeasonHitting`` or a raw ``ValidationError``."""
+    stat = make_stat([make_split(team=MARINERS, **stat_overrides)])
+    client = FakeMlb(player_stats={"hitting": {"season": stat}})
+    with pytest.raises(PlayerDataError) as raised:
+        get_player_season_hitting(PLAYER_ID, SEASON, client=client)
+    assert message in str(raised.value)
+    assert f"player {PLAYER_ID} season {SEASON}" in str(raised.value)
+
+
+def test_contradictory_traded_player_aggregate_raises_player_data_error() -> None:
+    """The aggregate split is the one validated; valid team splits do not
+    rescue a contradictory aggregate."""
+    aggregate = make_split(team=None, hits=600, at_bats=524, plate_appearances=664)
+    washington = make_split(team=NATIONALS, hits=84, at_bats=342, plate_appearances=436)
+    san_diego = make_split(team=PADRES, hits=43, at_bats=182, plate_appearances=228)
+    client = FakeMlb(
+        player_stats={
+            "hitting": {"season": make_stat([aggregate, washington, san_diego])}
+        }
+    )
+    with pytest.raises(PlayerDataError, match="hits"):
+        get_player_season_hitting(PLAYER_ID, SEASON, client=client)
+
+
 def test_no_client_supplied_creates_and_closes_owned_client(monkeypatch) -> None:
     """When no client is supplied, an owned ``Mlb`` client is used."""
     from app.services import players as players_module

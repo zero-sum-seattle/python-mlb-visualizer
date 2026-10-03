@@ -1,9 +1,12 @@
 """Tests for player identity and player-season hitting repository functions."""
 
+import pytest
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.database.models import PlayerRecord, PlayerSeasonHittingRecord
 from app.database.repositories import (
+    InvalidStoredPlayerHittingError,
     get_player,
     get_player_season_hitting,
     upsert_player,
@@ -230,4 +233,80 @@ def test_unknown_player_season_returns_none(migrated_session: Session) -> None:
     assert (
         get_player_season_hitting(migrated_session, player_id=PLAYER_ID, season=1999)
         is None
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stored rows that predate the current PlayerSeasonHitting contract
+# ---------------------------------------------------------------------------
+
+
+def corrupt_stored_hitting(
+    session: Session, *, player_id: int, season: int, **values: int
+) -> None:
+    """Write column values a valid ``PlayerSeasonHitting`` cannot carry.
+
+    The hits, strikeout, and walk subset rules are domain-only, so a row
+    written before they existed can still hold such values; normal ingestion
+    can no longer produce one. Commits.
+    """
+    session.execute(
+        update(PlayerSeasonHittingRecord)
+        .where(
+            PlayerSeasonHittingRecord.player_id == player_id,
+            PlayerSeasonHittingRecord.season == season,
+        )
+        .values(**values)
+    )
+    session.commit()
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"hits": 501}, "hits (501) cannot exceed at_bats (500)"),
+        ({"strikeouts": 501}, "strikeouts (501) cannot exceed at_bats (500)"),
+        (
+            {"base_on_balls": 601},
+            "base_on_balls (601) cannot exceed plate_appearances (600)",
+        ),
+    ],
+    ids=["hits-over-ab", "so-over-ab", "bb-over-pa"],
+)
+def test_contradictory_stored_row_is_a_named_integrity_error(
+    migrated_session: Session, values: dict[str, int], message: str
+) -> None:
+    _seed_player(migrated_session)
+    upsert_player_season_hitting(migrated_session, hitting=make_hitting())
+    migrated_session.commit()
+    corrupt_stored_hitting(
+        migrated_session, player_id=PLAYER_ID, season=SEASON, **values
+    )
+
+    with pytest.raises(InvalidStoredPlayerHittingError) as raised:
+        get_player_season_hitting(migrated_session, player_id=PLAYER_ID, season=SEASON)
+    assert str(raised.value) == (
+        f"Player {PLAYER_ID}'s stored {SEASON} hitting line contradicts itself: "
+        f"{message}"
+    )
+
+
+def test_valid_line_replaces_a_contradictory_stored_row(
+    migrated_session: Session,
+) -> None:
+    """Re-import is the documented repair, so a legacy row must not block it."""
+    _seed_player(migrated_session)
+    upsert_player_season_hitting(migrated_session, hitting=make_hitting())
+    migrated_session.commit()
+    corrupt_stored_hitting(
+        migrated_session, player_id=PLAYER_ID, season=SEASON, strikeouts=501
+    )
+
+    outcome = upsert_player_season_hitting(migrated_session, hitting=make_hitting())
+    migrated_session.commit()
+
+    assert outcome is PlayerPersistenceOutcome.UPDATED
+    assert (
+        get_player_season_hitting(migrated_session, player_id=PLAYER_ID, season=SEASON)
+        == make_hitting()
     )

@@ -79,6 +79,28 @@ data-unavailable state with the `import_player_season.py` command, because the
 selection is valid and only the analytics are absent; nothing is shown as zero.
 A rate with a zero denominator renders as `—` with its reason, never `.000`.
 
+### Hitting line integrity
+
+Issue #64 made `PlayerSeasonHitting` the single definition of a valid
+season line. It rejects any count that exceeds the total containing it by
+baseball definition: `AB <= PA`, `H <= AB`, `SO <= AB` (a strikeout is
+always charged as an at-bat, even on a dropped third strike), `BB <= PA`,
+`2B + 3B + HR <= H`, and `IBB <= BB`. Implied bounds (`SO <= PA`,
+`HR <= PA`) are not separate rules. Together these bound every rate
+numerator by its denominator, so analytics no longer re-checks them.
+Upstream data that breaks a rule fails normalization as `PlayerDataError`
+before the import transaction opens, so nothing is persisted.
+
+Only `AB <= PA`, the extra-base-hit rule, and the intentional-walk rule are
+also CHECK constraints, from the original table migration. The `H`, `SO`,
+and `BB` rules are deliberately domain-only: every write already goes
+through the domain model, and adding them to SQLite would mean a
+table-rebuild migration that either fails on an existing contradictory row
+or silently repairs it. Instead, such a legacy row raises
+`InvalidStoredPlayerHittingError` when read, the overview returns 409 with
+the violated rule and the re-import command, and re-importing replaces the
+row with a validated MLB line.
+
 A multi-club season is one combined aggregate. No historical team-stint model
 exists, so the page names no club. Primary position is the stored identity value, not a
 historical season attribute. Browser requests remain DB-only.

@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, aliased
@@ -48,6 +49,17 @@ class TeamGamePersistenceError(Exception):
 
 class DatabaseSchemaMissingError(Exception):
     """The database is reachable but the expected tables do not exist yet."""
+
+
+class InvalidStoredPlayerHittingError(Exception):
+    """A stored player-season hitting row violates ``PlayerSeasonHitting``.
+
+    Normal ingestion validates every line before writing it, but the hits,
+    strikeout, and walk subset rules are not CHECK constraints, so a row
+    written before those rules existed can still contradict itself. Reading it
+    names the violated rule instead of leaking a Pydantic ``ValidationError``.
+    Re-importing the player-season replaces the row with a valid MLB line.
+    """
 
 
 def _is_missing_team_game_table(error: OperationalError) -> bool:
@@ -624,9 +636,29 @@ def get_player_season_hitting(
     player_id: int,
     season: int,
 ) -> PlayerSeasonHitting | None:
-    """Return a player's stored season hitting aggregate, or None if not stored."""
+    """Return a player's stored season hitting aggregate, or None if not stored.
+
+    Raises
+    ------
+    InvalidStoredPlayerHittingError
+        The stored row contradicts the ``PlayerSeasonHitting`` contract.
+    """
     record = _load_player_season_hitting(session, player_id=player_id, season=season)
-    return None if record is None else record.to_domain()
+    if record is None:
+        return None
+    try:
+        return record.to_domain()
+    except ValidationError as exc:
+        problems = "; ".join(
+            str(error["ctx"]["error"])
+            if "error" in error.get("ctx", {})
+            else error["msg"]
+            for error in exc.errors(include_url=False)
+        )
+        raise InvalidStoredPlayerHittingError(
+            f"Player {player_id}'s stored {season} hitting line contradicts "
+            f"itself: {problems}"
+        ) from exc
 
 
 def upsert_player(
@@ -731,7 +763,15 @@ def upsert_player_season_hitting(
         )
         return PlayerPersistenceOutcome.INSERTED
 
-    if record.to_domain() == hitting:
+    try:
+        unchanged = record.to_domain() == hitting
+    except ValidationError:
+        # A legacy row that violates the current contract (see
+        # InvalidStoredPlayerHittingError) can never equal a valid line, so it
+        # is replaced by the freshly validated MLB line rather than blocking
+        # the re-import that repairs it.
+        unchanged = False
+    if unchanged:
         return PlayerPersistenceOutcome.UNCHANGED
 
     record.apply_domain(hitting)

@@ -108,24 +108,51 @@ class PlayerSeasonHitting(BaseModel):
         """Reject a season whose components contradict each other.
 
         These are definitional relationships, not empirical ones: an at-bat is
-        a plate appearance, an extra-base hit is a hit, and an intentional walk
-        is a walk. Spot-checked across real single-team, two-way, and
-        traded-player seasons with no violations before being encoded here.
+        a plate appearance, a hit and a batting strikeout each end an at-bat
+        (a strikeout is charged as an at-bat even when the batter reaches on a
+        dropped third strike), a walk ends a plate appearance, an extra-base
+        hit is a hit, and an intentional walk is a walk. The at-bat,
+        extra-base-hit, and intentional-walk rules were spot-checked across
+        real single-team, two-way, and traded-player seasons before being
+        encoded; the hits, strikeout, and walk rules (issue #64) follow from
+        the official scoring definitions alone.
+
+        The set is deliberately minimal. Bounds implied by these -- strikeouts
+        and home runs within plate appearances, home runs within at-bats -- are
+        not checked separately. Together the rules bound every numerator of the
+        rates in ``app.analytics.player_hitting`` by its denominator, so a line
+        that passes here can always be summarized.
+
+        ``player_season_hitting`` mirrors only the at-bat, extra-base-hit, and
+        intentional-walk rules as CHECK constraints; the hits, strikeout, and
+        walk rules are enforced here only. See "Hitting line integrity" in
+        ``docs/ui-information-architecture.md`` for why.
         """
-        if self.at_bats > self.plate_appearances:
-            raise ValueError(
-                f"at_bats ({self.at_bats}) cannot exceed plate_appearances "
-                f"({self.plate_appearances})"
-            )
-        extra_base_hits = self.doubles + self.triples + self.home_runs
-        if extra_base_hits > self.hits:
-            raise ValueError(
-                f"doubles + triples + home_runs ({extra_base_hits}) cannot "
-                f"exceed hits ({self.hits})"
-            )
-        if self.intentional_walks > self.base_on_balls:
-            raise ValueError(
-                f"intentional_walks ({self.intentional_walks}) cannot exceed "
-                f"base_on_balls ({self.base_on_balls})"
-            )
+        for count, count_name, total, total_name in (
+            (self.at_bats, "at_bats", self.plate_appearances, "plate_appearances"),
+            (self.hits, "hits", self.at_bats, "at_bats"),
+            (self.strikeouts, "strikeouts", self.at_bats, "at_bats"),
+            (
+                self.base_on_balls,
+                "base_on_balls",
+                self.plate_appearances,
+                "plate_appearances",
+            ),
+            (
+                self.doubles + self.triples + self.home_runs,
+                "doubles + triples + home_runs",
+                self.hits,
+                "hits",
+            ),
+            (
+                self.intentional_walks,
+                "intentional_walks",
+                self.base_on_balls,
+                "base_on_balls",
+            ),
+        ):
+            if count > total:
+                raise ValueError(
+                    f"{count_name} ({count}) cannot exceed {total_name} ({total})"
+                )
         return self
